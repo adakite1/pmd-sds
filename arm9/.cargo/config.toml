@@ -1,0 +1,13 @@
+[build]
+target = "thumbv5te-none-eabi"
+
+[unstable]
+build-std = ["core", "compiler_builtins"]
+build-std-features = ["compiler-builtins-mem"]
+
+[target.thumbv5te-none-eabi]
+rustflags = [
+    "-Clink-arg=-Tarm9.ld",
+    "-Clink-arg=--nmagic",
+    "-Ctarget-cpu=arm946e-s",
+]
