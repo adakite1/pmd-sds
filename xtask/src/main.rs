@@ -45,7 +45,7 @@ fn flatten2(path: &Path, skip_bss: bool, use_paddr: bool) -> Result<(u32, u32, V
         .filter_map(|ph| {
             let d = ph.data(endian, data).ok()?; // file-backed bytes go [p_offset, p_offset + p_filesz)
             let memsz = if skip_bss { d.len() as u64 } else { u64::from(ph.p_memsz(endian)) }; // the in-memory size
-            (memsz > 0).then(|| (u64::from(ph.p_vaddr(endian)), d, memsz)) // finds all valid (virtual_address, data_slice, memsz) to map
+            (memsz > 0).then(|| (u64::from(if use_paddr { ph.p_paddr(endian) } else { ph.p_vaddr(endian) }), d, memsz)) // finds all valid (virtual_address, data_slice, memsz) to map
         })
         .collect();
     segs.sort_by_key(|(a, _, _)| *a); // low addr to high
