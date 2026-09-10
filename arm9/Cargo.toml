@@ -1,6 +1,10 @@
-[package]
-name = "arm9"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+resolver = "3"
+members = ["arm9-bin"]
+default-members = []
 
-[dependencies]
+[profile.release]
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+debug = true  # these disappear later during ELF flattening
