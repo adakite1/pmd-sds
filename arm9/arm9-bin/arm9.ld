@@ -5,7 +5,8 @@ MEMORY {
     /* NDS main RAM location (4 megabytes) */
     MAIN_RAM (rwx) : ORIGIN = 0x02000000, LENGTH = 4M
 
-    ITCM (rwx) : ORIGIN = 0x01FF8000, LENGTH = 32K
+    ITCM (rwx) : ORIGIN = 0x01FF8000, LENGTH = 16K
+    /* The full hardware ITCM is 32K, but here we're using 16K only since the upper half is used as a runtime arena (heap) */
 
     DTCM (rw) : ORIGIN = 0x027E0000, LENGTH = 16K
 }
@@ -15,8 +16,8 @@ SECTIONS {
         then packing script encrypts it later, and BIOS decrypts it again at boot. */
     .secure_area 0x02000000 : {
         KEEP(*(.secure_area))
-        ASSERT(. == 0x02000800, "secure area must be exactly 0x800 bytes!");
     } > MAIN_RAM
+    ASSERT(. == 0x02000800, "secure area must be exactly 0x800 bytes!");
 
     /* .text, SDK order should be: crt0, game code, libs */
     .text 0x02000800 : {
@@ -41,10 +42,12 @@ SECTIONS {
         *(.rodata .rodata.*)
     } > MAIN_RAM
 
-    /* both need to be manually handled by crt0 like .bss */
+    /* This needs to be manually handled by crt0 like .bss (it's an array of function pointers that crt0 has to call one by one),
+        though no_std Rustlang usually doesn't use this (no CPP-style static constructors). */
     .init_array : ALIGN(4) {
         __init_array_start = .;
-        KEEP(*(.init_array .init_array.* .ctors))
+        KEEP (*(SORT_BY_INIT_PRIORITY(.init_array.*) SORT_BY_INIT_PRIORITY(.ctors.*)))
+        KEEP (*(.init_array EXCLUDE_FILE (*crtbegin*.o *crtbegin?.o *crtend*.o *crtend?.o ) .ctors))
         __init_array_end = .;
     } > MAIN_RAM
 
@@ -126,7 +129,7 @@ SECTIONS {
     __autoload_table_addr = LOADADDR(.autoload_table); /* where is the table */
     __autoload_table_size = SIZEOF(.autoload_table);
 
-    /DISCARD/ {
+    /DISCARD/ : {
         *(.ARM.extab*)
         *(.eh_frame*)
         *(.comment)
