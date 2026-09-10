@@ -17,7 +17,7 @@ SECTIONS {
     .secure_area 0x02000000 : {
         KEEP(*(.secure_area))
     } > MAIN_RAM
-    ASSERT(. == 0x02000800, "secure area must be exactly 0x800 bytes!");
+    ASSERT(. == 0x02000800, "secure area must be exactly 0x800 bytes!")
 
     /* .text, SDK order should be: crt0, game code, libs */
     .text 0x02000800 : {

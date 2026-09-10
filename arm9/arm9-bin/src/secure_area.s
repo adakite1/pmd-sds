@@ -21,8 +21,10 @@ SVC_WaitByLoop:
     .pool
 
     .equ __secure_used, . - __secure_area_start @ current_assembly_address - __secure_area_start = how many bytes so far
-    .rept (0x800 - __secure_used) / 4
-    .word 0xE7FFDEFF @ fill the rest with anything; here, just an undefined instruction so if we accidentally jump here we 'error'
+    .equ __secure_padding_words, (0x800 - __secure_used) / 4 @ fill the rest with anything; here, just an undefined instruction so if we accidentally jump here we 'error'
+
+    .rept __secure_padding_words
+    .word 0xE7FFDEFF
     .endr
 
 .global __secure_area_end
