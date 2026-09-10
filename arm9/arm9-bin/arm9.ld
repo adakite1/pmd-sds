@@ -60,15 +60,6 @@ SECTIONS {
     /* End of statically stored image */
     __static_data_end = .;
 
-    /* .bss (no data, should be zeroed by crt0) */
-    .bss (NOLOAD) : ALIGN(4) {
-        __bss_start = .;
-        *(.bss .bss.* COMMON)
-        *(.sbss .sbss.*)
-        . = ALIGN(4);
-        __bss_end = .;
-    } > MAIN_RAM
-
     /* Start of autoloaded blobs */
 
     /* For ease of understanding:
@@ -83,7 +74,15 @@ SECTIONS {
     .itcm : ALIGN(4) {
         /* crt0 should copy the range from LMA... */
         __itcm_start = .; /* ...to __itcm_start..__itcm_end (VMA), before calling any ITCM-resident code. */
-        *(.itcm .itcm.*)
+        *(.itcm .itcm.text .itcm.text.*)
+    } > ITCM AT> MAIN_RAM
+
+    .itcm.rodata : ALIGN(4) {
+        *(.itcm.rodata .itcm.rodata.*)
+    } > ITCM AT> MAIN_RAM
+
+    .itcm.data : ALIGN(4) {
+        *(.itcm.data .itcm.data.*)
         . = ALIGN(4);
         __itcm_end = .;
     } > ITCM AT> MAIN_RAM
@@ -97,7 +96,15 @@ SECTIONS {
 
     .dtcm : ALIGN(4) {
         __dtcm_start = .;
-        *(.dtcm .dtcm.*)
+        *(.dtcm .dtcm.text .dtcm.text.*)
+    } > DTCM AT> MAIN_RAM
+
+    .dtcm.rodata : ALIGN(4) {
+        *(.dtcm.rodata .dtcm.rodata.*)
+    } > DTCM AT> MAIN_RAM
+
+    .dtcm.data : ALIGN(4) {
+        *(.dtcm.data .dtcm.data.*)
         . = ALIGN(4);
         __dtcm_end = .;
     } > DTCM AT> MAIN_RAM
@@ -111,7 +118,6 @@ SECTIONS {
 
     /* THE AUTOLOAD TABLE
         Each entry is composed of: { dest_addr, stored_size, bss_size }
-        LMA ends up somewhere past .bss, meaning doing bss-zeroing first can *DESTROY* the data we want to copy; just like the original SDK, do `do_autoload` first before the BSS clear!
     */
     .autoload_table : ALIGN(4) {
         /* Entry 0: ITCM */
@@ -128,6 +134,18 @@ SECTIONS {
     __autoload_data = LOADADDR(.itcm); /* where does the first source blob start (LMA start) */
     __autoload_table_addr = LOADADDR(.autoload_table); /* where is the table */
     __autoload_table_size = SIZEOF(.autoload_table);
+
+    /* .bss (no data, should be zeroed by crt0); at the end since the bss sections should all be at
+        the end of their memory sections to avoid having a big gap in the final flat image. The
+        per-memory-section LMA is advanced no matter what, but bss at the end means that this can't
+        shift anything after it and create that empty space. */
+    .bss (NOLOAD) : ALIGN(4) {
+        __bss_start = .;
+        *(.bss .bss.* COMMON)
+        *(.sbss .sbss.*)
+        . = ALIGN(4);
+        __bss_end = .;
+    } > MAIN_RAM
 
     /DISCARD/ : {
         *(.ARM.extab*)
