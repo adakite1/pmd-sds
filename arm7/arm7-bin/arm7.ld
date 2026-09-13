@@ -27,6 +27,15 @@ SECTIONS {
         KEEP(*(.text.crt0))
     } > ARM7_STATIC
 
+    .module_params : ALIGN(4) {
+        __module_params = .;
+        LONG(__autoload_table_addr);                         /* autoload_infos_start */
+        LONG(__autoload_table_addr + __autoload_table_size); /* autoload_infos_end */
+        LONG(__autoload_data);                               /* autoload_blocks (LMA) */
+        LONG(__static_data_end);                             /* bss_start (empty) */
+        LONG(__static_data_end);                             /* bss_end */
+    } > ARM7_STATIC
+
     /* End of statically stored image (it's not a lot for arm7) */
     __static_data_end = .;
     /* Start of autoloaded blobs */

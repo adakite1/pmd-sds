@@ -57,6 +57,19 @@ SECTIONS {
         *(.sdata .sdata.*)
     } > MAIN_RAM
 
+    .build_info : ALIGN(4) {
+        __build_info = .;
+        LONG(__autoload_table_addr);                         /* autoload_infos_start */
+        LONG(__autoload_table_addr + __autoload_table_size); /* autoload_infos_end */
+        LONG(__autoload_data);                               /* autoload_blocks (LMA) */
+        LONG(__static_data_end);                             /* bss_start, but this is not entirely the same as __bss_start below, this bss_start is the SDK one that means the start of the module's post-static-data area. */
+        LONG(__bss_end);                                     /* bss_end */
+        LONG(0);                                             /* compressed_code_end (nothing is compressed) */
+        LONG(0x04027534);                                    /* sdk_version */
+        LONG(0xDEC00621);                                    /* nitrocode */
+        LONG(0x2106C0DE);                                    /* nitrocode_rev */
+    } > MAIN_RAM
+
     /* End of statically stored image */
     __static_data_end = .;
 
@@ -135,10 +148,19 @@ SECTIONS {
     __autoload_table_addr = LOADADDR(.autoload_table); /* where is the table */
     __autoload_table_size = SIZEOF(.autoload_table);
 
+    .static_footer : ALIGN(4) { /* when building the ROM, arm9_size should be set to exclude this footer (image_len - 12 bytes) */
+        LONG(0xDEC00621);
+        LONG(__build_info - 0x02000000);
+        LONG(0);
+    } > MAIN_RAM AT> MAIN_RAM
+
     /* .bss (no data, should be zeroed by crt0); at the end since the bss sections should all be at
         the end of their memory sections to avoid having a big gap in the final flat image. The
         per-memory-section LMA is advanced no matter what, but bss at the end means that this can't
         shift anything after it and create that empty space. */
+    /* implementing autoload like the original crt0 means a gap the size of the LMA part that remain unused
+        by any code for .bss, but since I'd like to avoid -Clink-arg=--no-check-sections which is needed to let the bss
+        actually overlap the LMA section, keeping it like this for now. */
     .bss (NOLOAD) : ALIGN(4) {
         __bss_start = .;
         *(.bss .bss.* COMMON)

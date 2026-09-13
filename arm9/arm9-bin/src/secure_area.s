@@ -9,8 +9,14 @@
 
 .global __secure_area_start
 __secure_area_start:
-    .ascii "encryObj" @ this will have to be encrypted later on by the packing script. Fun fact: .asciz appends a null terminator!
-    @+0x08
+    .word 0xE7FFDEFF
+    .word 0xE7FFDEFF
+    .word 0xE7FFDEFF
+    @+0x0C
+
+    @@@@ unused
+    @@@ .ascii "encryObj" @ this will have to be encrypted later on by the packing script. Fun fact: .asciz appends a null terminator!
+    @@@@+0x08
 
 .global SVC_WaitByLoop
 SVC_WaitByLoop:
