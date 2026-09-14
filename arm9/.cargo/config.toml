@@ -1,5 +1,5 @@
 [build]
-target = "../target-specs/thumbv5te-none-eabi.json"
+target = "../target-specs/armv5te-none-eabi.json"
 
 [unstable]
 json-target-spec = true
@@ -9,7 +9,7 @@ build-std-features = [
     "optimize_for_size"
 ]
 
-[target.thumbv5te-none-eabi]
+[target.armv5te-none-eabi]
 rustflags = [
     "-Clink-arg=-Tarm9.ld",
     "-Clink-arg=--nmagic",

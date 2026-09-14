@@ -144,6 +144,9 @@ SECTIONS {
     __autoload_table_addr = LOADADDR(.autoload_table); /* where is the table */
     __autoload_table_size = SIZEOF(.autoload_table);
 
+    __arm7_wram_clear_start = MAX(__static_data_end, 0x03800000);
+    __arm7_wram_clear_end = 0x0380ff00; /* 0x100 bytes are reserved as headroom at the top of the WRAM area where there are some IRQ-related and other contents */
+
     /DISCARD/ : {
         *(.ARM.extab*)
         *(.eh_frame*)
