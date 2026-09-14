@@ -1,7 +1,8 @@
 [build]
-target = "thumbv4t-none-eabi"
+target = "../target-specs/thumbv4t-none-eabi.json"
 
 [unstable]
+json-target-spec = true
 build-std = ["core", "compiler_builtins"]
 build-std-features = [
     "compiler-builtins-mem",
