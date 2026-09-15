@@ -147,6 +147,14 @@ SECTIONS {
     __arm7_wram_clear_start = MAX(__autoload_data, 0x03800000);
     __arm7_wram_clear_end = 0x0380ff00; /* 0x100 bytes are reserved as headroom at the top of the WRAM area where there are some IRQ-related and other contents */
 
+    __wram_top = ORIGIN(ARM7_WRAM) + LENGTH(ARM7_WRAM); /* 0x03810000 */
+    /* layout: [SVC: 0x40 bytes][IRQ: 0x400 bytes][System: stack grows further downward] */
+    __svc_stack_top = __wram_top - 0x40; /* 0x03810000 - 0x40 = 0x380FFC0 */
+    __irq_stack_top = __wram_top - 0x80; /* 0x03810000 - 0x80 = 0x380FF80 */
+    __irq_stack_size = 0x400;
+    __system_stack_pointer = __irq_stack_top - __irq_stack_size - 4; /* (unused label, for reference) 0x380FF80 - 0x400 - 4 = 0x380FB7C (put initial sp one word below boundary so first push/store is at the boundary word) */
+    __irq_handler_pointer = __wram_top - 4; /* 0x03810000 - 4 = 0x380FFFC */
+
     /DISCARD/ : {
         *(.ARM.extab*)
         *(.eh_frame*)
