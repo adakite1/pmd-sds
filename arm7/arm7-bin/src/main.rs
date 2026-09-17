@@ -87,12 +87,52 @@ fn init_banked_stacks() {
     // Note: No, I will not use naked asm or global asm. This works, nothing spills to stack.
 }
 
+#[inline(always)]
+fn copy_words_volatile(
+    mut src: *const u32,
+    mut dst: *mut u32,
+    mut words: usize,
+) {
+    while words != 0 {
+        unsafe {
+            core::arch::asm!(
+                "ldr {scratch}, [{src}], #4",
+                "str {scratch}, [{dst}], #4",
+                src = inout(reg) src,
+                dst = inout(reg) dst,
+                scratch = out(reg) _,
+                options(nostack, preserves_flags),
+            );
+        }
+        words -= 1;
+    }
+}
+
+const HW_MAIN_MEM: usize = 0x02000000;
+const HW_CARD_ROM_HEADER: usize = HW_MAIN_MEM + 0x007ffa80;
+const HW_CARD_ROM_HEADER_SIZE: usize = 0x160;
+const HW_DOWNLOAD_PARAMETER: usize = HW_CARD_ROM_HEADER + HW_CARD_ROM_HEADER_SIZE;
+const HW_DOWNLOAD_PARAMETER_SIZE: usize = 0x20;
+
+const IPL_CARD_ROM_HEADER: usize = 0x023fe940; /* IPL = "Initial Program Loader", which is the thing that runs before our code here even starts. These are magical source addresses that contain the data that needs to be copied. (I don't know who fills it initially, it's probably the IPL since this is data stored in the cartridge) */
+const IPL_DOWNLOAD_PARAMETER: usize = 0x023fe904;
+
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".text.crt0")]
 pub extern "C" fn _start() -> ! {
     ime_off();
     clear_arm7_wram_range();
     init_banked_stacks();
+    copy_words_volatile(
+        IPL_CARD_ROM_HEADER as *const u32,
+        HW_CARD_ROM_HEADER as *mut u32,
+        HW_CARD_ROM_HEADER_SIZE / 4,
+    );
+    copy_words_volatile(
+        IPL_DOWNLOAD_PARAMETER as *const u32,
+        HW_DOWNLOAD_PARAMETER as *mut u32,
+        HW_DOWNLOAD_PARAMETER_SIZE / 4,
+    );
     panic!();
 }
 
