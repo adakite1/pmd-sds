@@ -117,6 +117,106 @@ const HW_DOWNLOAD_PARAMETER_SIZE: usize = 0x20;
 const IPL_CARD_ROM_HEADER: usize = 0x023fe940; /* IPL = "Initial Program Loader", which is the thing that runs before our code here even starts. These are magical source addresses that contain the data that needs to be copied. (I don't know who fills it initially, it's probably the IPL since this is data stored in the cartridge) */
 const IPL_DOWNLOAD_PARAMETER: usize = 0x023fe904;
 
+#[inline(always)]
+fn copy_range_volatile(
+    mut src_start: *const u32,
+    src_end: *const u32,
+    mut dst: *mut u32,
+) -> *mut u32 {
+    while src_start != src_end {
+        unsafe {
+            core::arch::asm!(
+                "ldr {scratch}, [{src}], #4",
+                "str {scratch}, [{dst}], #4",
+                src = inout(reg) src_start,
+                dst = inout(reg) dst,
+                scratch = out(reg) _,
+                options(nostack, preserves_flags),
+            );
+        }
+    }
+    dst
+}
+
+#[inline(always)]
+fn zero_fill_volatile(mut dst: *mut u32, mut size: usize) -> *mut u32 {
+    debug_assert_eq!(size % core::mem::size_of::<u32>(), 0);
+    while size != 0 {
+        unsafe {
+            core::arch::asm!(
+                "str {zero}, [{dst}], #4",
+                dst = inout(reg) dst,
+                zero = in(reg) 0u32,
+                options(nostack, preserves_flags),
+            );
+        }
+        size -= 4;
+    }
+    dst
+}
+
+unsafe extern "C" {
+    static __module_params: u8;
+}
+
+#[repr(C)]
+struct ModuleParams {
+    autoload_infos_start: *const u32,
+    autoload_infos_end: *const u32,
+    autoload_blocks: *const u32,
+    bss_start: *const u32,
+    bss_end: *const u32,
+}
+
+#[repr(C)]
+struct AutoloadEntry {
+    dest_addr: *mut u32,
+    stored_size: u32,
+    bss_size: u32,
+}
+
+#[unsafe(no_mangle)]
+#[unsafe(link_section = ".text.crt0")]
+pub extern "C" fn do_autoload() -> ! {
+    let module_params = unsafe { &*(linker_addr(&raw const __module_params) as *const ModuleParams) };
+    let &ModuleParams { autoload_infos_start: mut current_entry_ptr, autoload_infos_end, autoload_blocks: mut current_src_start, .. } = module_params;
+    unsafe { asm!("", inout("r1") current_entry_ptr); }
+    unsafe { asm!("", in("r2") autoload_infos_end); }
+    unsafe { asm!("", inout("r3") current_src_start); }
+
+    while current_entry_ptr != autoload_infos_end {
+        let autoload_entry = unsafe { &*(current_entry_ptr as *const AutoloadEntry) };
+        let &AutoloadEntry { dest_addr, stored_size, bss_size } = autoload_entry;
+        unsafe { asm!("", in("r0") dest_addr); }
+        unsafe { asm!("", in("r4") stored_size); }
+        unsafe { asm!("", in("r5") bss_size); }
+
+        let current_src_end = unsafe { current_src_start.byte_add(stored_size as usize) };
+        unsafe { asm!("", in("r8") current_src_end); }
+        let dest_addr = copy_range_volatile(
+            current_src_start,
+            current_src_end,
+            dest_addr,
+        );
+
+        current_src_start = current_src_end;
+
+        unsafe {
+            // bss
+            zero_fill_volatile(dest_addr, bss_size as usize);
+
+            current_entry_ptr = current_entry_ptr.add(3);
+        }
+    }
+
+    unsafe {
+        asm!(
+            "bx lr",
+            options(noreturn, nostack),
+        );
+    }
+}
+
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".text.crt0")]
 pub extern "C" fn _start() -> ! {
@@ -133,6 +233,22 @@ pub extern "C" fn _start() -> ! {
         HW_DOWNLOAD_PARAMETER as *mut u32,
         HW_DOWNLOAD_PARAMETER_SIZE / 4,
     );
+    unsafe {
+        asm!(
+            "bl {}",
+            sym do_autoload,
+            /* do_autoload uses some callee-saved non-volatile registers (r4-r11),
+                which need to be preserved usually by the called function
+                if it wants to use them, but since here we are using a
+                manual `bx lr` to return, LLVM does not know that, so
+                we need to tell LLVM which registers will be clobbered. */
+            out("r4") _,
+            out("r5") _,
+            out("r8") _,
+            clobber_abi("C"),
+            options(nostack),
+        );
+    }
     panic!();
 }
 
