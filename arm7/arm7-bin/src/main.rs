@@ -217,6 +217,35 @@ pub extern "C" fn do_autoload() -> ! {
     }
 }
 
+#[inline(always)]
+fn zero_fill_range_volatile(
+    mut dst_start: *mut u32,
+    dst_end: *mut u32,
+) -> *mut u32 {
+    debug_assert_eq!((dst_end as u32 - dst_start as u32) as usize % core::mem::size_of::<u32>(), 0);
+    while dst_start != dst_end {
+        unsafe {
+            core::arch::asm!(
+                "str {zero}, [{dst}], #4",
+                dst = inout(reg) dst_start,
+                zero = in(reg) 0u32,
+                options(nostack, preserves_flags),
+            );
+        }
+    }
+    dst_start
+}
+
+#[inline(always)]
+fn clear_module_bss() {
+    let module_params = unsafe { &*(linker_addr(&raw const __module_params) as *const ModuleParams) };
+    let &ModuleParams { bss_start, bss_end, .. } = module_params;
+    unsafe { asm!("", in("r1") bss_start); }
+    unsafe { asm!("", in("r2") bss_end); }
+    // bss
+    zero_fill_range_volatile(bss_start as *mut u32, bss_end as *mut u32);
+}
+
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".text.crt0")]
 pub extern "C" fn _start() -> ! {
@@ -249,6 +278,7 @@ pub extern "C" fn _start() -> ! {
             options(nostack),
         );
     }
+    clear_module_bss();
     panic!();
 }
 
