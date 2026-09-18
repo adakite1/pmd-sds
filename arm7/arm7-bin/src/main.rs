@@ -246,6 +246,45 @@ fn clear_module_bss() {
     zero_fill_range_volatile(bss_start as *mut u32, bss_end as *mut u32);
 }
 
+const HW_MTEST_MRAMDTCTDSZ_FLAG: usize = 0x027ffffa; /* *mut u16 */
+
+#[unsafe(no_mangle)]
+#[unsafe(link_section = ".text.crt0")]
+pub extern "C" fn test_memory() -> ! {
+    let mut result = 1;
+
+    let upper = HW_MTEST_MRAMDTCTDSZ_FLAG as *mut u16;
+    let lower = (HW_MTEST_MRAMDTCTDSZ_FLAG - 0x400000) as *mut u16;
+    unsafe { asm!("", in("r2") upper); }
+    unsafe { asm!("", in("r3") lower); }
+
+    for test_value in 0u16..2 {
+        // unsafe { asm!("", in("r1") test_value); }
+
+        unsafe {
+            *upper = test_value;
+
+            if test_value != *lower {
+                result = 2;
+                break;
+            }
+        }
+    }
+    
+    unsafe { asm!("", in("r0") result); }
+
+    unsafe {
+        *upper = result; /* HW_MTEST_MRAMDTCTDSZ_FLAG will be 2 if the lower and upper addresses did not alias, and 1 if they did alias, suggesting a smaller Main RAM size. On a normal 4MB Main RAM Nintendo DS, this is 1. */
+    }
+
+    unsafe {
+        asm!(
+            "bx lr",
+            options(noreturn, nostack),
+        );
+    }
+}
+
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".text.crt0")]
 pub extern "C" fn _start() -> ! {
@@ -279,6 +318,14 @@ pub extern "C" fn _start() -> ! {
         );
     }
     clear_module_bss();
+    unsafe {
+        asm!(
+            "bl {}",
+            sym test_memory,
+            clobber_abi("C"),
+            options(nostack),
+        );
+    }
     panic!();
 }
 
