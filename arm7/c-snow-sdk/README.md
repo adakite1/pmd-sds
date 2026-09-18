@@ -1,0 +1,1 @@
+See [the ARM9 README](../../arm9/c-snow-sdk/README.md). This is the ARM7 half of the SDK.

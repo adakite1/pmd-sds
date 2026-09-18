@@ -5,6 +5,8 @@
 
 use core::arch::asm;
 
+use c_snow_sdk::{HardwareInterrupt, SnowSpMain};
+
 #[inline(always)]
 fn linker_addr(symbol: *const u8) -> usize {
     symbol as usize
@@ -285,6 +287,12 @@ pub extern "C" fn test_memory() -> ! {
     }
 }
 
+unsafe extern "C" {
+    static __irq_handler_pointer: u8;
+}
+
+const NOT_EXCEPTION_VEC_TABLE_UNDEF_MEM: usize = 0xffff0000;
+
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".text.crt0")]
 pub extern "C" fn _start() -> ! {
@@ -326,6 +334,25 @@ pub extern "C" fn _start() -> ! {
             options(nostack),
         );
     }
-    panic!();
+    unsafe {
+        core::intrinsics::volatile_store(
+            linker_addr(&raw const __irq_handler_pointer) as *mut u32,
+            HardwareInterrupt as *const () as u32,
+        ); /* set irq handler */
+    }
+    unsafe {
+        asm!(
+            "ldr r1, ={main}",
+            "ldr lr, ={a}",
+            /* high-vector mode is not set on the ARM7TDMI processor here,
+                and GBATEK says the BIOS is not mirrored either, so 0xffff0000
+                is undefined memory. So unlike the ARM9, here in ARM7, we just
+                hang on undefined memory if we return here. */
+            "bx r1",
+            a = const NOT_EXCEPTION_VEC_TABLE_UNDEF_MEM,
+            main = sym SnowSpMain,
+            options(noreturn, nostack),
+        );
+    }
 }
 
