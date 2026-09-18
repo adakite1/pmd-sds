@@ -256,7 +256,7 @@ pub extern "C" fn test_memory() -> ! {
     let mut result = 1;
 
     let upper = HW_MTEST_MRAMDTCTDSZ_FLAG as *mut u16;
-    let lower = (HW_MTEST_MRAMDTCTDSZ_FLAG - 0x400000) as *mut u16;
+    let lower = (HW_MTEST_MRAMDTCTDSZ_FLAG - 0x400000) as *const u16;
     unsafe { asm!("", in("r2") upper); }
     unsafe { asm!("", in("r3") lower); }
 
@@ -264,9 +264,9 @@ pub extern "C" fn test_memory() -> ! {
         // unsafe { asm!("", in("r1") test_value); }
 
         unsafe {
-            *upper = test_value;
+            core::intrinsics::volatile_store(upper, test_value);
 
-            if test_value != *lower {
+            if test_value != core::intrinsics::volatile_load(lower) {
                 result = 2;
                 break;
             }
@@ -276,7 +276,7 @@ pub extern "C" fn test_memory() -> ! {
     unsafe { asm!("", in("r0") result); }
 
     unsafe {
-        *upper = result; /* HW_MTEST_MRAMDTCTDSZ_FLAG will be 2 if the lower and upper addresses did not alias, and 1 if they did alias, suggesting a smaller Main RAM size. On a normal 4MB Main RAM Nintendo DS, this is 1. */
+        core::intrinsics::volatile_store(upper, result); /* HW_MTEST_MRAMDTCTDSZ_FLAG will be 2 if the lower and upper addresses did not alias, and 1 if they did alias, suggesting a smaller Main RAM size. On a normal 4MB Main RAM Nintendo DS, this is 1. */
     }
 
     unsafe {
