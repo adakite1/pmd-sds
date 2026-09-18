@@ -123,7 +123,7 @@ fn copy_range_volatile(
     src_end: *const u32,
     mut dst: *mut u32,
 ) -> *mut u32 {
-    while src_start != src_end {
+    while src_start < src_end {
         unsafe {
             core::arch::asm!(
                 "ldr {scratch}, [{src}], #4",
@@ -223,7 +223,7 @@ fn zero_fill_range_volatile(
     dst_end: *mut u32,
 ) -> *mut u32 {
     debug_assert_eq!((dst_end as u32 - dst_start as u32) as usize % core::mem::size_of::<u32>(), 0);
-    while dst_start != dst_end {
+    while dst_start < dst_end {
         unsafe {
             core::arch::asm!(
                 "str {zero}, [{dst}], #4",
