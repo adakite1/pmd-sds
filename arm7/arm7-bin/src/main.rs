@@ -8,11 +8,13 @@ use core::arch::asm;
 use c_snow_sdk::{HardwareInterrupt, SnowSpMain};
 
 #[inline(always)]
-fn linker_addr(symbol: *const u8) -> usize {
-    symbol as usize
+fn linker_addr(symbol: *const u8) -> u32 {
+    symbol as u32
 }
 
-const REG_BASE: u32 = 0x04000000;
+unsafe extern "C" {
+    static __reg_base: u8;
+}
 
 #[inline(always)]
 const fn reg_ime(reg_base: u32) -> *mut u32 {
@@ -21,7 +23,7 @@ const fn reg_ime(reg_base: u32) -> *mut u32 {
 
 #[inline(always)]
 fn ime_off() {
-    let mut v = REG_BASE;
+    let mut v = linker_addr(&raw const __reg_base);
     unsafe { asm!("", inout("ip") v); /* prevent llvm constant-folding */ }
     unsafe {
         core::intrinsics::volatile_store(reg_ime(v), v);

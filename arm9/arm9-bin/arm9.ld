@@ -152,6 +152,15 @@ SECTIONS {
     __autoload_table_addr = LOADADDR(.autoload_table); /* where is the table */
     __autoload_table_size = SIZEOF(.autoload_table);
 
+    __reg_base = 0x04000000;
+    __palette_ram_base = 0x05000000;
+    __vram_base = 0x06000000;
+    __oam_base = 0x07000000;
+
+    __dtcm_clear_size = 0x4000;
+    __palette_ram_clear_size = 0x400;
+    __oam_fill_size = 0x400;
+
     __dtcm_top = ORIGIN(DTCM) + LENGTH(DTCM); /* 0x027E4000 */
     /* layout: [reserved 0x40][SVC: 0x40 bytes][IRQ: 0x800 bytes][System: stack grows further downward] */
     __svc_stack_top = __dtcm_top - 0x40; /* 0x027E4000 - 0x40 = 0x27E3FC0 */

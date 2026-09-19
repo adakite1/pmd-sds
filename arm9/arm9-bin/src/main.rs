@@ -16,11 +16,16 @@ use core::arch::{asm, global_asm};
 global_asm!(include_str!("secure_area.s"));
 
 #[inline(always)]
-fn linker_addr(symbol: *const u8) -> usize {
-    symbol as usize
+fn linker_addr(symbol: *const u8) -> u32 {
+    symbol as u32
 }
 
-const REG_BASE: u32 = 0x04000000;
+unsafe extern "C" {
+    static __reg_base: u8;
+    static __palette_ram_base: u8;
+    static __vram_base: u8;
+    static __oam_base: u8;
+}
 
 #[inline(always)]
 const fn reg_vcount(reg_base: u32) -> *const u16 {
@@ -384,7 +389,7 @@ pub extern "C" fn init_cp15() -> ! {
             enabled = true,
         );
 
-        let dtcm_base = linker_addr(&raw const __dtcm_base) as u32;
+        let dtcm_base = linker_addr(&raw const __dtcm_base);
         asm!(
             /* CRn = c9 is designated for registers configuring the TCM
                 ITCM: fast instruction memory at 0x00000000
@@ -542,10 +547,33 @@ fn init_banked_stacks() {
     // Note: No, I will not use naked asm or global asm. This works, nothing spills to stack.
 }
 
+#[inline(always)]
+fn fill_volatile(value: u32, mut dst: *mut u32, mut size: usize) -> *mut u32 {
+    debug_assert_eq!(size % core::mem::size_of::<u32>(), 0);
+    while size != 0 {
+        unsafe {
+            core::arch::asm!(
+                "str {value}, [{dst}], #4",
+                dst = inout(reg) dst,
+                value = in(reg) value,
+                options(nostack, preserves_flags),
+            );
+        }
+        size -= 4;
+    }
+    dst
+}
+
+unsafe extern "C" {
+    static __dtcm_clear_size: u8;
+    static __palette_ram_clear_size: u8;
+    static __oam_fill_size: u8;
+}
+
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".text.crt0")]
 pub extern "C" fn _start() -> ! {
-    let mut reg_base = REG_BASE;
+    let mut reg_base = linker_addr(&raw const __reg_base);
     unsafe { asm!("", inout("ip") reg_base); /* prevent llvm constant-folding */ }
     ime_off(reg_base);
     wait_scanline_0(reg_base);
@@ -558,6 +586,21 @@ pub extern "C" fn _start() -> ! {
         );
     }
     init_banked_stacks();
+    fill_volatile(
+        0u32, /* btw, since stacks are all inside dtcm this clears that stack, though since nothing pushes onto the stack yet that is fine (same as original) (but ensure crt0 doesn't accidentally push or use the stack) */
+        linker_addr(&raw const __dtcm_base) as *mut u32,
+        linker_addr(&raw const __dtcm_clear_size) as usize,
+    );
+    fill_volatile(
+        0u32,
+        linker_addr(&raw const __palette_ram_base) as *mut u32,
+        linker_addr(&raw const __palette_ram_clear_size) as usize,
+    );
+    fill_volatile(
+        0x200,
+        linker_addr(&raw const __oam_base) as *mut u32,
+        linker_addr(&raw const __oam_fill_size) as usize,
+    );
     panic!();
 }
 
