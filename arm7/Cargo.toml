@@ -7,7 +7,7 @@ default-members = ["arm7-bin"]
 
 [profile.release]
 panic = "immediate-abort"
-opt-level = "s"
+opt-level = "z"
 lto = "fat"
 codegen-units = 1
 debug = true  # these disappear later during ELF flattening

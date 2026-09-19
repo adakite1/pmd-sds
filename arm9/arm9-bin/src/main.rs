@@ -572,6 +572,172 @@ unsafe extern "C" {
 
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".text.crt0")]
+fn uncompress_backward(ptr: *const u32) {
+    if ptr.is_null() {
+        return;
+    }
+
+    /* Useful diagram:
+        r1 (stop)           r3 (read ←)        r0 (footer)       r2 (write ←)
+        |                     |                   |                  |
+        v                     v                   v                  v
+        [===compressed data===|------footer-------|....expansion.....] */
+    unsafe {
+        let buffer_expansion_size: u32;
+        let packed_header: u32;
+
+        asm!(
+            "ldmdb {ptr}, {{r1, r2}}",
+            ptr = in(reg) ptr,
+            out("r1") packed_header, /* r1 = [r0-8] (packed header) */
+            out("r2") buffer_expansion_size, /* r2 = [r0-4] (buffer expansion size) */
+        );
+
+        let mut write_pointer: *mut u8;
+        let mut read_pointer: *const u8;
+        let stop_address: *const u8;
+        let buffer_end_address_copy: *const u8;
+
+        asm!(
+            "add  r2, {ptr}, r2",           /* r2 = write pointer (top of decompressed buffer) */
+            "sub  r3, {ptr}, r1, lsr #24",  /* r3 = read pointer (r1's top byte is an offset) */
+            "bic  r1, r1, #0xFF000000",     /* clear said top byte from r1 */
+            "sub  r1, {ptr}, r1",           /* r1 = stop address (bottom of buffer) */
+            "mov  r4, r2",                  /* r4 = save copy of buffer end address for flushing the cache later */
+            ptr = in(reg) ptr,
+            inout("r1") packed_header => stop_address,
+            inout("r2") buffer_expansion_size => write_pointer,
+            out("r3") read_pointer,
+            out("r4") buffer_end_address_copy,
+        );
+
+        'outer: while read_pointer > stop_address {
+            let mut flag_byte: u32;
+            
+            asm!(
+                "ldrb	r5, [r3, #-1]!",
+                inout("r3") read_pointer,
+                out("r5") flag_byte,
+            );
+
+            let mut i: i32 = 8; /* 8 bits in a byte */
+
+            loop {
+                i = i - 1;
+
+                if i.is_negative() {
+                    break;
+                }
+
+                if flag_byte & 0x80 != 0 { /* back-reference */
+                    let mut displacement: u32;
+                    let mut length: isize;
+
+                    asm!(
+                        "ldrb  ip, [r3, #-1]!",  /* high byte of the 16-bit reference token */
+                        "ldrb  r7, [r3, #-1]!",  /* low byte */
+                        /* the 16-bit token is packed as LLLL OOOO OOOOOOOO, where LLLL is 4 bits of length, and the rest are 12 bits of offset */
+                        "orr   r7, r7, ip, lsl #8", /* r7 now contains the full 16-bit value */
+
+                        "bic   r7, r7, #0xF000", /* clear LLLL to get r7 = bottom 12 bits = displacement */
+                        "add   r7, r7, #2",      /* displacement += 2 (minimum distance of 2) */
+                        "add   ip, ip, #32",
+                        /* We add by 0x20 here and later subtract by 0x10 per iteration.
+                            That never touches the bits & 0x0F (the lower 4 bits) until the
+                            *upper* 4 bits underflow, at which point the whole value becomes
+                            negative since the value loaded in the register was a single byte
+                            and there aren't any more significant bits set, and that's when
+                            it stops. So ignoring the lower 4 bits and treating the upper 4 bits
+                            like the count works. */
+
+                        inout("r3") read_pointer,
+                        out("r7") displacement,
+                        out("ip") length,
+                    );
+
+                    asm!(
+                        "1:",
+                        "ldrb  r0, [r2, r7]",   /* read the already-decompressed value at (write_ptr + displacement) */
+                        "strb  r0, [r2, #-1]!", /* write */
+                        "subs  {len}, {len}, #16", /* the subtraction by 0x10 mentioned above */
+                        "bge 1b",
+                        len = inlateout(reg) length => length,
+                        in("r7") displacement,
+                        inout("r2") write_pointer,
+                        out("r0") _,
+                        options(nostack),
+                    );
+                } else { /* literal */
+                    asm!(
+                        "ldrb  r0, [r3, #-1]!", /* read */
+                        "strb  r0, [r2, #-1]!", /* write */
+                        inout("r3") read_pointer,
+                        inout("r2") write_pointer,
+                        out("r0") _,
+                    );
+                }
+
+                #[inline(always)]
+                fn _lsl(flag_byte: &mut u32) {
+                    unsafe {
+                        asm!( /* repeated on purpose */
+                            "lsl {f}, {f}, #1",
+                            f = inout(reg) *flag_byte,
+                        );
+                    }
+                }
+
+                if read_pointer <= stop_address {
+                    _lsl(&mut flag_byte);
+                    break 'outer;
+                } else {
+                    _lsl(&mut flag_byte);
+                }
+            }
+        }
+
+        let mut stop_address_cache_line_aligned: *const u8;
+
+        asm!(
+            "bic  r3, r1, #31", /* align down to 32-byte cache line */
+            in("r1") stop_address,
+            out("r3") stop_address_cache_line_aligned,
+        );
+
+        /* Since the decompressed data is executable code (here), we
+            now walk every 32-byte cache line that was written to and
+            flush it from the data cache. We also invalidate the instruction
+            cache so the CPU is told to fetch the newly decompressed code
+            rather than stale cache contents.
+            
+            Note: Since you want the newly decompressed data to be ready by
+            the time the I-side reaches for the data, clean + invalidate D-cache
+            should maybe be first? But for some reason the original doesn't,
+            and the game runs fine, so we'll leave it like this for now. */
+        loop {
+            asm!(
+                /* CRn = c7 is the group designated for Cache, Branch Predictor, and Memory Barrier operations
+                    CRm = c10 groups cache clean operations and pipeline/bus stall commands */
+                "mcr p15, 0, {0}, c7, c10, 4",  // Drain write buffer (CP15DSB)
+                /*  CRm = c5 targets I-Cache */
+                "mcr p15, 0, r3, c7, c5, 1",  // Invalidate I-cache line at r3
+                "mcr p15, 0, r3, c7, c14, 1", // Clean + invalidate D-cache line at r3
+                in(reg) 0,
+                in("r3") stop_address_cache_line_aligned,
+                options(nostack),
+            );
+
+            stop_address_cache_line_aligned = stop_address_cache_line_aligned.add(32); /* next cache line */
+        
+            if stop_address_cache_line_aligned >= buffer_end_address_copy {
+                break;
+            }
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+#[unsafe(link_section = ".text.crt0")]
 pub extern "C" fn _start() -> ! {
     let mut reg_base = linker_addr(&raw const __reg_base);
     unsafe { asm!("", inout("ip") reg_base); /* prevent llvm constant-folding */ }
