@@ -324,6 +324,41 @@ pub extern "C" fn init_cp15() -> ! {
             buf    = in(reg) BUFFERABLE_REGIONS,
             options(nomem, nostack),
         );
+
+        //TODO:
+
+        let mut sctlr: u32;
+
+        /* System Control Register (SCTLR), system register identified by
+            CRn (Primary Register) = c1 is the group designated for System Control Registers,
+            CRm (Secondary Register) = c0,
+            opcode2 = 0 */
+        asm!("mrc p15, 0, {0}, c1, c0, 0", out(reg) sctlr, options(nomem, nostack)); /* nomem = these operations do not access general memory */
+
+        /* Set bits 0x0005707d (bits 0, 2, 3, 4, 5, 6, 12, 13, 14, 16, 18)
+            bit 0   M   Protection unit (MMU) enable
+            bit 1   A   Alignment fault check (1 will fault on unaligned access) (Since in ARMv5 ARM946E-S, unaligned 32-bit data reads don't abort, but instead load the aligned word and circularly rotate the byte into place, there is no abort generator for alignment at all, meaning this SBZ here)
+            bit 2   C   DCache (data-cache) enable
+            bit 3   W   Write buffer enable (On ARM946E-S this is set per-region so this global one SBO, according the manual)
+            bit 4   P   32-bit Program space enable (reserved SBO, should be 1; for the transition from 26-bit addressing (ARMv2, ARMv3) to 32-bit addressing that was done by the time ARM946E-S became a thing)
+            bit 5   D   32-bit Data space enable (reserved SBO, should be 1; for the transition from 26-bit addressing (ARMv2, ARMv3) to 32-bit addressing that was done by the time ARM946E-S became a thing)
+            bit 6   L   Late Abort model select (reserved SBO, should be 1; for the transition from 26-bit addressing (ARMv2, ARMv3) to 32-bit addressing that was done by the time ARM946E-S became a thing)
+            bit 7   B   Big-endian
+            bit 8   S   System protection bit (SBZ)
+            bit 9   R   ROM protection bit (SBZ)
+            ...reserved SBZ
+            bit 12  I   ICache (instruction-cache) enable
+            bit 13  V   Alternate vector select (High Vectors, Exception vectors mapped to 0xffff0000)
+            bit 14  RR  Round-robin replacement (Cache replacement strategy)
+            bit 15  L4  Configure disable loading TBIT (with this enabled, data loads into the PC no longer checks the TBIT to switch to Thumb, but you can still switch modes with explicit bx and blx)
+            bit 16  DT  Data RAM (DTCM) enable
+            bit 17  DL  Data RAM load mode (enable. Since DTCM is layered *over* existing memory, a section of existing memory is basically inaccessible depending on whether anything was mapped there by the External Bus. Turning this on goes around DTCM and lets accesses to the DTCM address space *by the Data Bus (D-Side)* to fall through to the covered External Bus (Instruction Fetch targeting DTCM range goes through External Bus no matter what, the I-side does not have the physical wiring to access DTCM SRAM). Disabled when running real code since it defeats the point of fast DTCM)
+            bit 18  IT  Instruction RAM (ITCM) enable
+            bit 19  IL  Instruction RAM load mode (enable. Since ITCM is layered *over* existing memory, a section of existing memory is basically inaccessible depending on whether anything was mapped there by the External Bus. Turning this on goes around ITCM and lets accesses to the ITCM address space *by the Instruction Bus (I-Side)* to fall through to the covered External Bus (Data Access by the D-side like ldr and str *still gets routed to the ITCM SRAM*). Disabled when running real code since it defeats the point of fast ITCM)
+            ...reserved SBZ */
+        sctlr |= 0x0005707d;
+        
+        asm!("mcr p15, 0, {0}, c1, c0, 0", in(reg) sctlr, options(nomem, nostack)); /* Write back into SCTLR */
     }
 
     unsafe {
