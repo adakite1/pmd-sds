@@ -178,6 +178,97 @@ pub enum AccessPermission {
     FullAccess     = 0b11,
 }
 
+pub const fn build_c5_mask(perms: [AccessPermission; 8]) -> u32 {
+    let mut mask = 0u32;
+    let mut i = 0;
+    while i < 8 {
+        mask |= (perms[i] as u32) << (i * 2);
+        i += 1;
+    }
+    mask
+}
+
+#[repr(u32)]
+#[derive(Copy, Clone, Debug)]
+pub enum AccessPermissionExtended {
+    /// No access by anyone.
+    NoAccess       = 0b0000,
+    /// Read/write in privileged modes, not accessible in user mode.
+    PrivRwUserNone = 0b0001,
+    /// Read/write in privileged modes, read-only in user mode.
+    PrivRwUserRo   = 0b0010,
+    /// Read/write by all modes.
+    FullAccess     = 0b0011,
+    // 0b0100 is UNP (UNPREDICTABLE).
+    /// Read-only in privileged modes, not accessible in user mode.
+    PrivRoUserNone = 0b0101,
+    /// Read-only in privileged modes, read-only in user mode.
+    PrivRoUserRo = 0b0110,
+    // 0b0111 and all 0b1xxx are UNP.
+}
+
+pub const fn build_c5_mask_extended(perms: [AccessPermissionExtended; 8]) -> u32 {
+    let mut mask = 0u32;
+    let mut i = 0;
+    while i < 8 {
+        mask |= (perms[i] as u32) << (i * 4);
+        i += 1;
+    }
+    mask
+}
+
+// 0x05100011
+pub const IAP_CONFIG: u32 = build_c5_mask_extended([
+    AccessPermissionExtended::PrivRwUserNone, // Region 0 (04000000-07FFFFFF): The broad ARM9 I/O, palettes, VRAM, OAM window
+    /* 0x04000000  ARM9 I/O registers
+        0x05000000  Palette RAM
+        0x06000000  VRAM
+        0x07000000  OAM */
+    AccessPermissionExtended::PrivRwUserNone, // Region 1 (02000000-027FFFFF): Main RAM (including the 02400000-027FFFFF mirror on a normal 4 MiB Main RAM NDS)
+    AccessPermissionExtended::NoAccess,       // Region 2 (027E0000-027FFFFF): Guard area around DTCM and c7 overlays (note that GBATEK's default is 027C0000-027FFFFF, which is a bit different)
+    /* 0x027E0000..0x027E3FFF  c4 DTCM
+        0x027E4000..0x027FEFFF  c2 remainder <== only this region is guarded since the other two parts have higher-numbered MPU regions describing it
+        0x027FF000..0x027FFFFF  c7 Debug Console Work Area */
+    AccessPermissionExtended::NoAccess,       // Region 3 (08000000-0FFFFFFF): GBA Slot (Execute-Never) (GBA cartridge ROM begins at 08000000, with max 32 MiB. GBA cartridge RAM is at 0A000000, max 64 KiB.)
+    AccessPermissionExtended::NoAccess,       // Region 4 (027E0000-027E3FFF): DTCM (Execute-Never) (Higher MPU priority than c1 and c2)
+    AccessPermissionExtended::PrivRwUserNone, // Region 5 (01000000-01FFFFFF): Describes the MPU permissions for the ITCM mirrors between range 0x01000000..0x01FFFFFF (upper 16 MiB of the full 32 MiB ITCM virtual window) (note that the linker script puts the ITCM image inside this range, so these permissions apply by default)
+    AccessPermissionExtended::PrivRoUserNone, // Region 6 (FFFF0000-FFFF7FFF): BIOS ROM (Fetch only) (Only about ~3 KiB used according to GBATEK, exception vectors at 0xffff0000)
+    AccessPermissionExtended::NoAccess,       // Region 7 (027FF000-027FFFFF): Debug Console Work Area (Execute-Never)
+    /* Considering that r7 would only have its own real special memory region on an 8 MiB Main RAM debug-console,
+        this is likely a debug-console and debugger work area. You can't run code from it, privileged data
+        access is read-and-write, and both caching and write buffering is disables, which is exactly what
+        you'd want since you want the debugger to observe the same contents in its work area as the CPU at all times (you want to get live data, and since you're in development phase the performance benefit of caching does not matter).
+
+        GBATEK notes this as Shared Work instead but this is *NOT* the same as the one controlled by WRAMCNT, which
+        can be 0 KiB, 16 KiB, or 32 KiB, and goes from 0x03000000 to 0x03FFFFFF.
+        0x03000000..0x03007FFF  physical Shared WRAM
+        0x03008000..0x0300FFFF  same 32 KiB again
+        ...
+        0x037F8000..0x037FFFFF  same 32 KiB again (this particular one is the usual Shared-WRAM alias)
+        If 0 KiB is allocated to ARM9, according to GBATEK the ARM9 Shared-WRAM area is undefined. */
+]);
+const _: () = assert!(IAP_CONFIG == 0x05100011);
+
+// 0x15111011
+pub const DAP_CONFIG: u32 = build_c5_mask_extended([
+    AccessPermissionExtended::PrivRwUserNone, // Region 0 (04000000-07FFFFFF): The broad ARM9 I/O, palettes, VRAM, OAM window
+    /* 0x04000000  ARM9 I/O registers
+        0x05000000  Palette RAM
+        0x06000000  VRAM
+        0x07000000  OAM */
+    AccessPermissionExtended::PrivRwUserNone, // Region 1 (02000000-027FFFFF): Main RAM (including the 02400000-027FFFFF mirror on a normal 4 MiB Main RAM NDS)
+    AccessPermissionExtended::NoAccess,       // Region 2 (027E0000-027FFFFF): Guard area around DTCM and c7 overlays (note that GBATEK's default is 027C0000-027FFFFF, which is a bit different)
+    /* 0x027E0000..0x027E3FFF  c4 DTCM
+        0x027E4000..0x027FEFFF  c2 remainder <== only this region is guarded since the other two parts have higher-numbered MPU regions describing it
+        0x027FF000..0x027FFFFF  c7 Debug Console Work Area */
+    AccessPermissionExtended::PrivRwUserNone, // Region 3 (08000000-0FFFFFFF): GBA Slot (RW) (GBA cartridge ROM begins at 08000000, with max 32 MiB. GBA cartridge RAM is at 0A000000, max 64 KiB.)
+    AccessPermissionExtended::PrivRwUserNone, // Region 4 (027E0000-027E3FFF): DTCM (Execute-Never) (Higher MPU priority than c1 and c2)
+    AccessPermissionExtended::PrivRwUserNone, // Region 5 (01000000-01FFFFFF): Describes the MPU permissions for the ITCM mirrors between range 0x01000000..0x01FFFFFF (upper 16 MiB of the full 32 MiB ITCM virtual window) (note that the linker script puts the ITCM image inside this range, so these permissions apply by default)
+    AccessPermissionExtended::PrivRoUserNone, // Region 6 (FFFF0000-FFFF7FFF): BIOS ROM (Write-Protected)
+    AccessPermissionExtended::PrivRwUserNone, // Region 7 (027FF000-027FFFFF): Debug Console Work Area (RW)
+]);
+const _: () = assert!(DAP_CONFIG == 0x15111011);
+
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".text.crt0")]
 pub extern "C" fn init_cp15() -> ! {
@@ -325,7 +416,13 @@ pub extern "C" fn init_cp15() -> ! {
             options(nomem, nostack),
         );
 
-        //TODO:
+        asm!(
+            "mcr p15, 0, {iap}, c5, c0, 3",
+            "mcr p15, 0, {dap}, c5, c0, 2",
+            iap = in(reg) IAP_CONFIG,
+            dap = in(reg) DAP_CONFIG,
+            options(nomem, nostack),
+        );
 
         let mut sctlr: u32;
 
