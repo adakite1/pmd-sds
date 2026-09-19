@@ -12,6 +12,10 @@ MEMORY {
 }
 
 SECTIONS {
+    __main_ram_base = ORIGIN(MAIN_RAM);
+    __itcm_base = ORIGIN(ITCM);
+    __dtcm_base = ORIGIN(DTCM);
+
     /* First 0x800 bytes are the secure area. At this point has "encryObj" marker,
         then packing script encrypts it later, and BIOS decrypts it again at boot. */
     .secure_area 0x02000000 : {

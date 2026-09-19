@@ -116,6 +116,10 @@ macro_rules! set_cp15_region {
     }};
 }
 
+unsafe extern "C" {
+    static __dtcm_base: u8;
+}
+
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".text.crt0")]
 pub extern "C" fn init_cp15() -> ! {
@@ -212,6 +216,28 @@ pub extern "C" fn init_cp15() -> ! {
             /* 0x027FF000, 4 KiB */
             size_encoding = cp15_size_encoding(4 * 1024),
             enabled = true,
+        );
+
+        let dtcm_base = linker_addr(&raw const __dtcm_base) as u32;
+        asm!(
+            /* CRn = c9 is designated for registers configuring the TCM
+                ITCM: fast instruction memory at 0x00000000
+                DTCM: fast data/stack memory at 0x027e0000 */
+            "mcr p15, 0, {itcm}, c9, c1, 1", // ITCM Control Register
+            "mcr p15, 0, {dtcm}, c9, c1, 0", // DTCM Control Register
+            itcm = in(reg) 0x20,
+            dtcm = in(reg) (dtcm_base | 0x0000000a),
+            /* Bits 1-5 of the lower part (0x20, 0x0a) means virtual size,
+                defined as 512 << N where N = (lower part >> 1) & 0x1F.
+                512 << ((0x20 >> 1) & 0x1F) = 0x02000000 = 32 MiB virtual region,
+                which includes mirrors since the NDS only has 32 KiB of physical ITCM.
+                For DTCM, 512 << ((0x0a >> 1) & 0x1F) = 0x4000 = 16 KiB.
+                
+                These also don't actually enable either region, enabling the region is
+                done by setting SCTLR:
+                SCTLR bit 16: DTCM enable
+                SCTLR bit 18: ITCM enable */
+            options(nostack),
         );
     }
 
