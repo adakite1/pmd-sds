@@ -152,6 +152,14 @@ SECTIONS {
     __autoload_table_addr = LOADADDR(.autoload_table); /* where is the table */
     __autoload_table_size = SIZEOF(.autoload_table);
 
+    __dtcm_top = ORIGIN(DTCM) + LENGTH(DTCM); /* 0x027E4000 */
+    /* layout: [reserved 0x40][SVC: 0x40 bytes][IRQ: 0x800 bytes][System: stack grows further downward] */
+    __svc_stack_top = __dtcm_top - 0x40; /* 0x027E4000 - 0x40 = 0x27E3FC0 */
+    __svc_irq_stack_boundary = __dtcm_top - 0x80; /* 0x027E4000 - 0x80 = 0x27E3F80 */
+    __irq_stack_top = __svc_irq_stack_boundary - 4; /* 0x027E4000 - 0x80 - 4 = 0x27E3F7C, importantly: pre-compensate for AAPCS too */
+    __irq_stack_size = 0x800;
+    __system_stack_pointer = __svc_irq_stack_boundary - __irq_stack_size - 4; /* (unused label, for reference) */
+
     .static_footer : ALIGN(4) { /* when building the ROM, arm9_size should be set to exclude this footer (image_len - 12 bytes) */
         LONG(0xDEC00621);
         LONG(__build_info - 0x02000000);

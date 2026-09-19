@@ -466,6 +466,82 @@ pub extern "C" fn init_cp15() -> ! {
     }
 }
 
+unsafe extern "C" {
+    static __svc_stack_top: u8;
+    static __svc_irq_stack_boundary: u8;
+    static __irq_stack_size: u8;
+}
+
+const MODE_SVC: u32 = 19; //0x13
+const MODE_IRQ: u32 = 18; //0x12
+const MODE_SYS: u32 = 31; //0x1F
+
+/// Ensures SP ≡ 4 (mod 8), so that pushing an odd-number of words onto
+/// the stack will land SP on an 8-byte boundary, satisfying AAPCS.
+#[inline(always)]
+pub fn align_sp_4_mod_8() {
+    unsafe {
+        core::arch::asm!(
+            "tst sp, #4",
+            "subeq sp, sp, #4",
+            options(nostack),
+        );
+    }
+}
+
+/// Ensures SP ≡ 0 (mod 8), so that SP lands on an 8-byte boundary, satisfying AAPCS.
+#[inline(always)]
+pub fn align_sp_0_mod_8() {
+    unsafe {
+        core::arch::asm!(
+            "tst sp, #4",
+            "subne sp, sp, #4",
+            options(nostack),
+        );
+    }
+}
+
+#[inline(always)]
+fn init_banked_stacks() {
+    unsafe {
+        let mut svc_irq_stack_boundary: u32;
+
+        asm!(
+            // 1. Supervisor (SVC) Mode
+            "msr CPSR_c, {svc_mode}",
+            "ldr sp, ={svc_top}",
+
+            // 2. IRQ Mode
+            "msr CPSR_c, {irq_mode}",
+            "ldr r0, ={svc_irq_stack_boundary}",
+            "sub sp, r0, #4",
+
+            svc_mode = const MODE_SVC,
+            irq_mode = const MODE_IRQ,
+            svc_top = sym __svc_stack_top,
+            svc_irq_stack_boundary = sym __svc_irq_stack_boundary,
+            out("r0") svc_irq_stack_boundary,
+        );
+
+        align_sp_4_mod_8();
+
+        asm!(
+            "ldr r1, ={irq_size}",
+            "sub r1, r0, r1",
+
+            // 3. System (SYS) Mode
+            "msr CPSR_fsxc, {sys_mode}",
+            "sub sp, r1, #4",
+
+            sys_mode = const MODE_SYS,
+            irq_size = sym __irq_stack_size,
+            in("r0") svc_irq_stack_boundary,
+            out("r1") _,
+        );
+    }
+    // Note: No, I will not use naked asm or global asm. This works, nothing spills to stack.
+}
+
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".text.crt0")]
 pub extern "C" fn _start() -> ! {
@@ -481,6 +557,7 @@ pub extern "C" fn _start() -> ! {
             options(nostack),
         );
     }
+    init_banked_stacks();
     panic!();
 }
 

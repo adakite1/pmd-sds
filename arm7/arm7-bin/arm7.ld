@@ -152,7 +152,7 @@ SECTIONS {
     __arm7_wram_clear_end = 0x0380ff00; /* 0x100 bytes are reserved as headroom at the top of the WRAM area where there are some IRQ-related and other contents */
 
     __wram_top = ORIGIN(ARM7_WRAM) + LENGTH(ARM7_WRAM); /* 0x03810000 */
-    /* layout: [SVC: 0x40 bytes][IRQ: 0x400 bytes][System: stack grows further downward] */
+    /* layout: [reserved 0x40][SVC: 0x40 bytes][IRQ: 0x400 bytes][System: stack grows further downward] */
     __svc_stack_top = __wram_top - 0x40; /* 0x03810000 - 0x40 = 0x380FFC0 */
     __irq_stack_top = __wram_top - 0x80; /* 0x03810000 - 0x80 = 0x380FF80 */
     __irq_stack_size = 0x400;
