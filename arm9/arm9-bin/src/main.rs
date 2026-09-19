@@ -120,6 +120,46 @@ unsafe extern "C" {
     static __dtcm_base: u8;
 }
 
+pub struct RegionMask(pub u8);
+
+impl RegionMask {
+    pub const fn new() -> Self {
+        Self(0)
+    }
+
+    pub const fn with(mut self, region: usize) -> Self {
+        assert!(region < 8, "PMSAv5 only supports regions 0-7");
+        self.0 |= 1 << region;
+        self
+    }
+
+    pub const fn as_u32(self) -> u32 {
+        self.0 as u32
+    }
+}
+
+/* Region 1 (Main RAM) and Region 6 (ARM9 BIOS High Vectors) are both cacheable,
+    everything else, like MMIO registers, the cartridge slots, and others remain uncached
+    to prevent stale reads and timing hazards. */
+
+pub const I_CACHE_REGIONS: u32 = RegionMask::new()
+    .with(1)
+    .with(6)
+    .as_u32(); // 0x42 (66)
+
+pub const D_CACHE_REGIONS: u32 = RegionMask::new()
+    .with(1)
+    .with(6)
+    .as_u32(); // 0x42 (66)
+
+/* Region 1 only (Write-Back for RAM) for bufferability, because the 0xffff0000 region
+    maps to the ARM9 BIOS chip which is hard-wired mask ROM etched into the silicon at the factory
+    so it is read-only. Also, the exception handlers live here and those shouldn't be overwritten anyways. */
+
+pub const BUFFERABLE_REGIONS: u32 = RegionMask::new()
+    .with(1)
+    .as_u32(); // 0x02 (2)
+
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".text.crt0")]
 pub extern "C" fn init_cp15() -> ! {
@@ -238,6 +278,16 @@ pub extern "C" fn init_cp15() -> ! {
                 SCTLR bit 16: DTCM enable
                 SCTLR bit 18: ITCM enable */
             options(nostack),
+        );
+
+        asm!(
+            "mcr p15, 0, {icache}, c2, c0, 1", /* Instruction Cacheable (c2, c0, 1) -> 0x42 */
+            "mcr p15, 0, {dcache}, c2, c0, 0", /* Data Cacheable (c2, c0, 0) -> 0x42 */
+            "mcr p15, 0, {buf},    c3, c0, 0", /* Data Bufferable (c3, c0, 0) -> 0x02 */
+            icache = in(reg) I_CACHE_REGIONS,
+            dcache = in(reg) D_CACHE_REGIONS,
+            buf    = in(reg) BUFFERABLE_REGIONS,
+            options(nomem, nostack),
         );
     }
 
