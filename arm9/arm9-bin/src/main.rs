@@ -643,6 +643,8 @@ struct BuildInfo {
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".text.crt0")]
 fn uncompress_backward(ptr: *const u32) {
+    /* ENTERED WITH ≡4 ALIGNMENT. */
+
     if ptr.is_null() {
         return;
     }

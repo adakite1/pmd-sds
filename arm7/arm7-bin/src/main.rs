@@ -3,7 +3,7 @@
 #![feature(core_intrinsics)]
 #![allow(internal_features)]
 
-use core::arch::asm;
+use core::arch::{asm, naked_asm};
 
 use c_snow_sdk::{HardwareInterrupt, SnowSpMain};
 
@@ -58,6 +58,18 @@ unsafe extern "C" {
 const MODE_SVC: u32 = 19; //0x13
 const MODE_IRQ: u32 = 18; //0x12
 const MODE_SYS: u32 = 31; //0x1F
+
+/// Ensures SP ≡ 0 (mod 8), so that SP lands on an 8-byte boundary, satisfying AAPCS.
+#[inline(always)]
+pub fn align_sp_0_mod_8() {
+    unsafe {
+        core::arch::asm!(
+            "tst sp, #4",
+            "subne sp, sp, #4",
+            options(nostack),
+        );
+    }
+}
 
 #[inline(always)]
 fn init_banked_stacks() {
@@ -293,6 +305,34 @@ unsafe extern "C" {
     static __irq_handler_pointer: u8;
 }
 
+unsafe extern "C" {
+    static __init_array_start: u8;
+    static __init_array_end: u8;
+}
+
+#[unsafe(no_mangle)]
+#[unsafe(link_section = ".text.crt0")]
+#[unsafe(naked)]
+pub extern "C" fn _call_static_initializers() {
+    naked_asm!(
+        "push {{r4, r5, lr}}",
+        "ldr r4, ={init_array_start}",
+        "ldr r5, ={init_array_end}",
+        "b 1f",
+        "2:",
+        "mov lr, pc",
+        "bx r0",
+        "1:",
+        "cmp r4, r5",
+        "ldrne r0, [r4], #4",
+        "cmpne r0, #0",
+        "bne 2b",
+        "pop {{r4, r5, pc}}",
+        init_array_start = sym __init_array_start,
+        init_array_end = sym __init_array_end,
+    );
+}
+
 const NOT_EXCEPTION_VEC_TABLE_UNDEF_MEM: usize = 0xffff0000;
 
 #[unsafe(no_mangle)]
@@ -342,6 +382,8 @@ pub extern "C" fn _start() -> ! {
             HardwareInterrupt as *const () as u32,
         ); /* set irq handler */
     }
+    _call_static_initializers();
+    let main: *const u32;
     unsafe {
         asm!(
             "ldr r1, ={main}",
@@ -350,9 +392,17 @@ pub extern "C" fn _start() -> ! {
                 and GBATEK says the BIOS is not mirrored either, so 0xffff0000
                 is undefined memory. So unlike the ARM9, here in ARM7, we just
                 hang on undefined memory if we return here. */
-            "bx r1",
             a = const NOT_EXCEPTION_VEC_TABLE_UNDEF_MEM,
             main = sym SnowSpMain,
+            out("r1") main,
+            options(nostack),
+        );
+    }
+    align_sp_0_mod_8();
+    unsafe {
+        asm!(
+            "bx r1",
+            in("r1") main,
             options(noreturn, nostack),
         );
     }
