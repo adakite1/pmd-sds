@@ -5,6 +5,9 @@ version = 4
 [[package]]
 name = "arm9-bin"
 version = "0.1.0"
+dependencies = [
+ "c-snow",
+]
 
 [[package]]
 name = "c-snow"

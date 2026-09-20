@@ -13,6 +13,8 @@ const _: () = assert!(
 
 use core::arch::{asm, global_asm};
 
+use c_snow_sdk::SnowMain;
+
 global_asm!(include_str!("secure_area.s"));
 
 #[inline(always)]
@@ -231,9 +233,62 @@ pub const IAP_CONFIG: u32 = build_c5_mask_extended([
         0x07000000  OAM */
     AccessPermissionExtended::PrivRwUserNone, // Region 1 (02000000-027FFFFF): Main RAM (including the 02400000-027FFFFF mirror on a normal 4 MiB Main RAM NDS)
     AccessPermissionExtended::NoAccess,       // Region 2 (027E0000-027FFFFF): Guard area around DTCM and c7 overlays (note that GBATEK's default is 027C0000-027FFFFF, which is a bit different)
-    /* 0x027E0000..0x027E3FFF  c4 DTCM
-        0x027E4000..0x027FEFFF  c2 remainder <== only this region is guarded since the other two parts have higher-numbered MPU regions describing it
-        0x027FF000..0x027FFFFF  c7 Debug Console Work Area */
+    /* 0x027E0000..=0x027E3FFF(..0x027E4000)  c4 DTCM
+        0x027E4000..=0x027FEFFF(..0x027FF000)  c2 remainder <== only this region is guarded since the other two parts have higher-numbered MPU regions describing it
+        0x027FF000..=0x027FFFFF(..0x02800000)  c7 Debug Console Work Area
+        
+        Range c2 there also happens to be, interestingly, basically ARM7_MAIN, which is from 0x027E0000..=0x027FEFFF(..0x027FF000, size 0x1F000).
+        If you scan the entire asm of the game, you'll find that there are zero occurrences of addresses in the range 0x027E4000..=0x027FEFFF(..0x027FF000)
+        anywhere inside arm9 (which is to be expected), but *also* very few (single digits) occurrences of literals in the range 0x023E4000..=0x023FEFFF(..0x023FF000, or just c2 - 0x400000) (none of them data stores either),
+        the lower mirror of that same range. You'd think maybe the arm9 might occasionally read or write to *some* address in that range, considering it is firmly inside the usual ARM9's
+        broader Main RAM range 0x02000000..=0x023FFFFF(..0x02400000), but no, that's not the case, there's nothing in that smaller range. From this, I'm guessing that this range is highly
+        likely to be private to ARM7 by convention. You can also see this from the fact that almost all of the literal addresses used in ARM7 are in this same bucket.
+        This also includes 0x027E0000..=0x027E3FFF(..0x027E4000, or c4), private for ARM7 as well, because of course those addresses were shadowed by DTCM on the ARM9 anyways so inaccessible from there,
+        and likewise a count shows that the lower mirror which *is* accessible (c4 - 0x400000) is never used in ARM9 apart from a few non-data-access constants, either. That smaller region is likewise seen
+        used heavily by ARM7.
+        
+        From this, here's a rule-of-thumb table for addresses used by both CPUs:
+        - The two Main RAM mirrors are:
+            - 0x02000000..=0x023FFFFF(..0x02400000)
+            - 0x02400000..=0x027FFFFF(..0x02800000)
+            - on arm9,
+              0x027E0000..=0x027E3FFF(..0x027E4000) is routed to DTCM and so that part of Main RAM is not accessible from there,
+              it's only accessible through
+              0x023E0000..=0x023E3FFF(..0x027E4000), which it basically never does, there are just a few non-accessed constants in arm9 referencing this range,
+              so this 0x4000 block, along with the rest of the Main RAM from there on, is private for arm7.
+        Main RAM layout (* = arm9 accesses, ^ = arm7 accesses, _ = not accessed, s = appears as literals only, C = accessed during crt0, D = referenced by constants as definitions, x = arm9 blocked by MPU):
+        - (start at 0x02000000 or 0x02400000)
+        -   lower *C: 0x02000000..=0x023DFFFF(..0x023E0000) || upper __: 0x02400000..=0x027DFFFF(..0x027E0000)   (note: neither processor really seems to ever access this region using the upper mirror)
+        -  [Large non-DTCM Main RAM prefix for ARM9 use     || '':           0x3e0000 bytes]
+        -   lower D_: 0x023E0000..=0x023E3FFF(..0x023E4000) || upper *^: 0x027E0000..=0x027E3FFF(..0x027E4000)   (note: since DTCM shadows Main RAM on arm9, while the upper mirror is marked *^, arm9 and arm7 see *different* memory, arm9 the DTCM, arm7 its private Main RAM region)
+        -  [ARM7 Main RAM                                   || DTCM:         0x4000 bytes]
+        -   lower sC: 0x023E4000..=0x023FEFFF(..0x023FF000) || upper x^: 0x027E4000..=0x027FEFFF(..0x027FF000)   (note: arm7 copies some cartridge data from the lower range to somewhere else, and arm9 does some bound checking for some stuff related to... Download Play)
+        -  [ARM7 Main RAM (continued)                       || '':           0x1b000 bytes]
+        -   lower __: 0x023FF000..=0x023FFFFF(..0x02400000) || upper *^: 0x027FF000..=0x027FFFFF(..0x02800000)   (note: as noted, neither cpus access this region from the lower side)
+        -  [Development work Main RAM                       || '':           0x1000 bytes]
+        - (end at 0x02400000 or 0x02800000)
+        -                 => ARM7 Main RAM combined is 0x027E0000..=0x027FEFFF(..0x027FF000)
+        ARM9:*
+        - ARM9 bread-and-butter is 0x02000000..=0x023DFFFF(..0x023E0000), with static up until 0x0238EC80 and dynamic heap (arena) from there until 0x023E0000.
+        - From 0x023E0000, the entire ARM7 Main RAM private region is generally skipped and unused.
+        - Then at the top of the lower mirror is the development work area 0x023FF000..=0x023FFFFF(..0x02400000, or c7 - 0x400000). This isn't used by arm9 either because
+            arm9 system code prefers the *top* mirror for this range instead. That's the same for arm7. Both processors access the system and development work area here
+            entirely through the upper mirror. (This is checked to be the case through looking at all literals, and there are *zero* literals referencing the lower range.)
+        - There *are no* references (at least looking at literals) to 0x02400000..=0x027DFFFF(..0x027E0000) in arm9, when arm9 uses its own massive Main RAM memory area, it
+            *always* uses the lower mirror.
+        - DTCM.
+        - Now the upper mirror of ARM7 Main RAM is skipped and completely unused (there are *zero* literals referencing this region, again, checked via script form the assembly),
+            and we come back at 0x027FF000 where there are some system code that uses the region for system work and development work. As mentioned before, this upper mirror
+            of this range is favored by both CPUs for accessing this region.
+        - ARM9 seems to avoid both mirrors of the ARM7 private Main RAM region *by convention* (nothing enforces, in particular, access to the lower mirror, as the MPU only protects the upper one),
+            with the upper one completely non-appearing (blocked by MPU) while the lower one appearing as constants here and there without memory load or store.
+        - Furthermore, as stated, the Main RAM above that, from 0x027FF000 to 0x027FFFFF, also seems to be used by system-related ARM9 code only, and only used by this upper mirror with no literals referencing
+            the lower mirror at *all*. Given that the upper mirror is only its own distinct memory on an 8 MiB Debug Console, as mentioned earlier, this is thus likely to be reserved for non-final debugging builds.
+        ARM7:^
+        - ARM7 bread-and-butter is 0x027E0000..=0x027FEFFF(..0x027FF000), with substantial use beyond that from 0x027FF000..=0x027FFFFF(..0x02800000) as well.
+        - Within 0x02000000 to 0x02800000, there are no literals whatsoever anywhere else, *EXCEPT*:
+            - 1. 0x023E4000 to 0x023FF000 where some cartridge data is copied from and kept during crt0. And
+            - 2. The small static segment at 0x02380000 where crt0 does what it needs to do on startup. (Same for arm9 on this) */
     AccessPermissionExtended::NoAccess,       // Region 3 (08000000-0FFFFFFF): GBA Slot (Execute-Never) (GBA cartridge ROM begins at 08000000, with max 32 MiB. GBA cartridge RAM is at 0A000000, max 64 KiB.)
     AccessPermissionExtended::NoAccess,       // Region 4 (027E0000-027E3FFF): DTCM (Execute-Never) (Higher MPU priority than c1 and c2)
     AccessPermissionExtended::PrivRwUserNone, // Region 5 (01000000-01FFFFFF): Describes the MPU permissions for the ITCM mirrors between range 0x01000000..0x01FFFFFF (upper 16 MiB of the full 32 MiB ITCM virtual window) (note that the linker script puts the ITCM image inside this range, so these permissions apply by default)
@@ -906,6 +961,8 @@ fn clear_module_bss() {
     synchronize_executable_cache_lines_in_range(bss_start_copy as *const u8, fill_end as *const u8);
 }
 
+const EXCEPTION_VEC_TABLE: usize = 0xffff0000;
+
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".text.crt0")]
 pub extern "C" fn _start() -> ! {
@@ -958,6 +1015,34 @@ pub extern "C" fn _start() -> ! {
         );
     }
     clear_module_bss();
-    panic!();
+    
+
+    //TODO:
+
+
+    
+
+    let main: *const u32;
+
+    unsafe {
+        asm!(
+            "ldr r1, ={main}",
+            "ldr lr, ={a}",
+            a = const EXCEPTION_VEC_TABLE,
+            main = sym SnowMain,
+            out("r1") main,
+            options(nostack),
+        );
+    }
+
+    align_sp_0_mod_8();
+
+    unsafe {
+        asm!(
+            "bx r1",
+            in("r1") main,
+            options(noreturn, nostack),
+        );
+    }
 }
 
