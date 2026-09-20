@@ -68,7 +68,7 @@ SECTIONS {
         LONG(__autoload_data);                               /* autoload_blocks (LMA) */
         LONG(__static_data_end);                             /* bss_start, but this is not entirely the same as __bss_start below, this bss_start is the SDK one that means the start of the module's post-static-data area. */
         LONG(__bss_end);                                     /* bss_end */
-        LONG(0);                                             /* compressed_code_end (nothing is compressed) */
+        LONG(0);                                             /* compressed_code_ptr (nothing is compressed) */
         LONG(0x04027534);                                    /* sdk_version */
         LONG(0xDEC00621);                                    /* nitrocode */
         LONG(0x2106C0DE);                                    /* nitrocode_rev */

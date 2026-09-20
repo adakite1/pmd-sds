@@ -570,6 +570,19 @@ unsafe extern "C" {
     static __oam_fill_size: u8;
 }
 
+#[repr(C)]
+struct BuildInfo {
+    autoload_infos_start: *const u32,
+    autoload_infos_end: *const u32,
+    autoload_blocks: *const u32,
+    bss_start: *const u32,
+    bss_end: *const u32,
+    compressed_code_ptr: *const u32,
+    sdk_version: u32,
+    nitrocode: u32,
+    nitrocode_rev: u32,
+}
+
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".text.crt0")]
 fn uncompress_backward(ptr: *const u32) {
@@ -736,6 +749,10 @@ fn uncompress_backward(ptr: *const u32) {
     }
 }
 
+unsafe extern "C" {
+    static __build_info: u8;
+}
+
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".text.crt0")]
 pub extern "C" fn _start() -> ! {
@@ -767,6 +784,9 @@ pub extern "C" fn _start() -> ! {
         linker_addr(&raw const __oam_base) as *mut u32,
         linker_addr(&raw const __oam_fill_size) as usize,
     );
+    let build_info = unsafe { &*(linker_addr(&raw const __build_info) as *const BuildInfo) };
+    let &BuildInfo { compressed_code_ptr, .. } = build_info;
+    uncompress_backward(compressed_code_ptr);
     panic!();
 }
 
