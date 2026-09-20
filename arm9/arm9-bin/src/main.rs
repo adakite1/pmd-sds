@@ -709,40 +709,68 @@ fn uncompress_backward(ptr: *const u32) {
             }
         }
 
-        let mut stop_address_cache_line_aligned: *const u8;
+        synchronize_executable_cache_lines_in_range(stop_address, buffer_end_address_copy);
+    }
+}
+
+#[inline(always)]
+fn synchronize_executable_cache_lines_in_range(start: *const u8, stop: *const u8) {
+    unsafe {
+        let mut start_address_cache_line_aligned: *const u8;
 
         asm!(
-            "bic  r3, r1, #31", /* align down to 32-byte cache line */
-            in("r1") stop_address,
-            out("r3") stop_address_cache_line_aligned,
+            "bic  {aligned}, {start_address}, #31", /* align down to 32-byte cache line */
+            start_address = in(reg) start,
+            aligned = out(reg) start_address_cache_line_aligned,
         );
 
-        /* Since the decompressed data is executable code (here), we
-            now walk every 32-byte cache line that was written to and
-            flush it from the data cache. We also invalidate the instruction
-            cache so the CPU is told to fetch the newly decompressed code
-            rather than stale cache contents.
+        /* Since the data write synchronized is executable code, there are three
+            systems to touch in order.
+            First, the Clean + invalidate D-cache line. Since D-cache handles writeable
+            memory, the cleaning steps takes dirty lines and pushes them into the write
+            buffer.
+            Second, once all those write commands are issued on the write buffer, waiting
+            on Drain write buffer (CP15DSB) ensures that those writes have actually been
+            written.
+            Third, we can finally now Invalidate the I-cache line. With the instruction
+            cache invalidated, the I-Side will fetch code from memory again, and since we have
+            already waited on the Drain write buffer, we know that it will read the newly written
+            data.
+
+            So here, we will walk every 32-byte cache line and perform those steps.
             
-            Note: Since you want the newly decompressed data to be ready by
-            the time the I-side reaches for the data, clean + invalidate D-cache
-            should maybe be first? But for some reason the original doesn't,
-            and the game runs fine, so we'll leave it like this for now. */
+            Now, you might notice here a difference in the implementation with my
+            explanation. We appear to first do a Drain write buffer, and then invalidate the
+            *I-cache* instead of the D-cache first, only cleaning + invalidating the D-cache
+            after. Shouldn't this mean that for each cache-line, there are two problems?
+            One that when we issue that Drain write buffer barrier, the write commands for this
+            cache-line haven't been issued yet because we haven't started a D-cache clean.
+            And two that we are invalidating the I-cache *before* the D-cache, telling the I-cache
+            to fetch instructions again before we are sure that the newly written instructions
+            are visible to it?
+            And you'd be right, but for some reason, the original game orders it like this and nothing
+            is visibly breaking, so we'll leave it like this. This only affects the very last cache-
+            line we touch, and data written here isn't run a good amount of time later anyways so
+            even that last cache-line has probably updated by the time we will be reading, which is
+            probably why it works anyways. But it does look like someone thought "let's make sure
+            that the code that just got decompressed gets seen," read through the ARM technical reference manual,
+            and put all the instructions related to cache cleaning here and thought, "surely that covers it." */
         loop {
             asm!(
                 /* CRn = c7 is the group designated for Cache, Branch Predictor, and Memory Barrier operations
                     CRm = c10 groups cache clean operations and pipeline/bus stall commands */
                 "mcr p15, 0, {0}, c7, c10, 4",  // Drain write buffer (CP15DSB)
                 /*  CRm = c5 targets I-Cache */
-                "mcr p15, 0, r3, c7, c5, 1",  // Invalidate I-cache line at r3
-                "mcr p15, 0, r3, c7, c14, 1", // Clean + invalidate D-cache line at r3
+                "mcr p15, 0, {current}, c7, c5, 1",  // Invalidate I-cache line at current
+                "mcr p15, 0, {current}, c7, c14, 1", // Clean + invalidate D-cache line at current
                 in(reg) 0,
-                in("r3") stop_address_cache_line_aligned,
+                current = in(reg) start_address_cache_line_aligned,
                 options(nostack),
             );
 
-            stop_address_cache_line_aligned = stop_address_cache_line_aligned.add(32); /* next cache line */
+            start_address_cache_line_aligned = start_address_cache_line_aligned.add(32); /* next cache line */
         
-            if stop_address_cache_line_aligned >= buffer_end_address_copy {
+            if start_address_cache_line_aligned >= stop {
                 break;
             }
         }
@@ -751,6 +779,99 @@ fn uncompress_backward(ptr: *const u32) {
 
 unsafe extern "C" {
     static __build_info: u8;
+}
+
+#[inline(always)]
+fn copy_range_volatile(
+    mut src_start: *const u32,
+    src_end: *const u32,
+    mut dst: *mut u32,
+) -> *mut u32 {
+    while src_start < src_end {
+        unsafe {
+            core::arch::asm!(
+                "ldr {scratch}, [{src}], #4",
+                "str {scratch}, [{dst}], #4",
+                src = inout(reg) src_start,
+                dst = inout(reg) dst,
+                scratch = out(reg) _,
+                options(nostack, preserves_flags),
+            );
+        }
+    }
+    dst
+}
+
+#[inline(always)]
+fn zero_fill_volatile(mut dst: *mut u32, mut size: usize) -> *mut u32 {
+    debug_assert_eq!(size % core::mem::size_of::<u32>(), 0);
+    while size != 0 {
+        unsafe {
+            core::arch::asm!(
+                "str {zero}, [{dst}], #4",
+                dst = inout(reg) dst,
+                zero = in(reg) 0u32,
+                options(nostack, preserves_flags),
+            );
+        }
+        size -= 4;
+    }
+    dst
+}
+
+#[repr(C)]
+struct AutoloadEntry {
+    dest_addr: *mut u32,
+    stored_size: u32,
+    bss_size: u32,
+}
+
+#[unsafe(no_mangle)]
+#[unsafe(link_section = ".text.crt0")]
+pub extern "C" fn do_autoload() -> ! {
+    let build_info = unsafe { &*(linker_addr(&raw const __build_info) as *const BuildInfo) };
+    let &BuildInfo { autoload_infos_start: mut current_entry_ptr, autoload_infos_end, autoload_blocks: mut current_src_start, .. } = build_info;
+    unsafe { asm!("", inout("r1") current_entry_ptr); }
+    unsafe { asm!("", in("r2") autoload_infos_end); }
+    unsafe { asm!("", inout("r3") current_src_start); }
+
+    while current_entry_ptr != autoload_infos_end {
+        let autoload_entry = unsafe { &*(current_entry_ptr as *const AutoloadEntry) };
+        let &AutoloadEntry { dest_addr: dest_addr_start, stored_size, bss_size } = autoload_entry;
+        unsafe { asm!("", in("r0") dest_addr_start); }
+        unsafe { asm!("", in("r4") stored_size); }
+        unsafe { asm!("", in("r5") bss_size); }
+
+        let current_src_end = unsafe { current_src_start.byte_add(stored_size as usize) };
+        unsafe { asm!("", in("r8") current_src_end); }
+        let mut dest_addr = copy_range_volatile(
+            current_src_start,
+            current_src_end,
+            dest_addr_start,
+        );
+        unsafe { asm!("", in("r7") dest_addr); }
+
+        current_src_start = current_src_end;
+
+        unsafe {
+            // bss
+            dest_addr = zero_fill_volatile(
+                dest_addr,
+                bss_size as usize,
+            );
+
+            synchronize_executable_cache_lines_in_range(dest_addr_start as *const u8, dest_addr as *const u8);
+
+            current_entry_ptr = current_entry_ptr.add(3);
+        }
+    }
+
+    unsafe {
+        asm!(
+            "bx lr",
+            options(noreturn, nostack),
+        );
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -787,6 +908,23 @@ pub extern "C" fn _start() -> ! {
     let build_info = unsafe { &*(linker_addr(&raw const __build_info) as *const BuildInfo) };
     let &BuildInfo { compressed_code_ptr, .. } = build_info;
     uncompress_backward(compressed_code_ptr);
+    unsafe {
+        asm!(
+            "bl {}",
+            sym do_autoload,
+            /* do_autoload uses some callee-saved non-volatile registers (r4-r11),
+                which need to be preserved usually by the called function
+                if it wants to use them, but since here we are using a
+                manual `bx lr` to return, LLVM does not know that, so
+                we need to tell LLVM which registers will be clobbered. */
+            out("r4") _,
+            out("r5") _,
+            out("r7") _,
+            out("r8") _,
+            clobber_abi("C"),
+            options(nostack),
+        );
+    }
     panic!();
 }
 
