@@ -4,6 +4,7 @@
 #![allow(internal_features)]
 
 #[unsafe(no_mangle)]
+#[unsafe(link_section = ".itcm.text")]
 pub extern "C" fn HardwareInterrupt() -> ! {
     core::hint::black_box(2+2);
     panic!();

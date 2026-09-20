@@ -13,7 +13,7 @@ const _: () = assert!(
 
 use core::arch::{asm, global_asm};
 
-use c_snow_sdk::SnowMain;
+use c_snow_sdk::{HardwareInterrupt, SnowMain};
 
 global_asm!(include_str!("secure_area.s"));
 
@@ -961,6 +961,10 @@ fn clear_module_bss() {
     synchronize_executable_cache_lines_in_range(bss_start_copy as *const u8, fill_end as *const u8);
 }
 
+unsafe extern "C" {
+    static __irq_handler_pointer: u8;
+}
+
 const EXCEPTION_VEC_TABLE: usize = 0xffff0000;
 
 #[unsafe(no_mangle)]
@@ -1019,8 +1023,28 @@ pub extern "C" fn _start() -> ! {
 
     //TODO:
 
-
     
+
+
+
+    unsafe {
+        core::intrinsics::volatile_store(
+            linker_addr(&raw const __irq_handler_pointer) as *mut u32,
+            HardwareInterrupt as *const () as u32,
+        ); /* set irq handler */
+    }
+
+
+
+    //TODO:
+
+
+
+
+
+
+
+
 
     let main: *const u32;
 

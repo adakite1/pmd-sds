@@ -168,6 +168,7 @@ SECTIONS {
     __irq_stack_top = __svc_irq_stack_boundary - 4; /* 0x027E4000 - 0x80 - 4 = 0x27E3F7C, importantly: pre-compensate for AAPCS too */
     __irq_stack_size = 0x800;
     __system_stack_pointer = __svc_irq_stack_boundary - __irq_stack_size - 4; /* (unused label, for reference) */
+    __irq_handler_pointer = __dtcm_top - 4; /* 0x027E4000 - 4 = 0x27E3FFC */
 
     .static_footer : ALIGN(4) { /* when building the ROM, arm9_size should be set to exclude this footer (image_len - 12 bytes) */
         LONG(0xDEC00621);
