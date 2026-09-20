@@ -11,7 +11,7 @@ const _: () = assert!(
     "at least one of and no more than one of na/eu/jp must be enabled"
 );
 
-use core::arch::{asm, global_asm};
+use core::arch::{asm, global_asm, naked_asm};
 
 use c_snow_sdk::{HardwareInterrupt, SnowMain};
 
@@ -967,6 +967,33 @@ unsafe extern "C" {
     static __irq_handler_pointer: u8;
 }
 
+unsafe extern "C" {
+    static __init_array_start: u8;
+    static __init_array_end: u8;
+}
+
+#[unsafe(no_mangle)]
+#[unsafe(link_section = ".text.crt0")]
+#[unsafe(naked)]
+pub extern "C" fn _call_static_initializers() {
+    naked_asm!(
+        "push {{r4, r5, lr}}",
+        "ldr r4, ={init_array_start}",
+        "ldr r5, ={init_array_end}",
+        "b 1f",
+        "2:",
+        "blx r0",
+        "1:",
+        "cmp r4, r5",
+        "ldrne r0, [r4], #4",
+        "cmpne r0, #0",
+        "bne 2b",
+        "pop {{r4, r5, pc}}",
+        init_array_start = sym __init_array_start,
+        init_array_end = sym __init_array_end,
+    );
+}
+
 const EXCEPTION_VEC_TABLE: usize = 0xffff0000;
 
 #[unsafe(no_mangle)]
@@ -1036,17 +1063,7 @@ pub extern "C" fn _start() -> ! {
         ); /* set irq handler */
     }
 
-
-
-    //TODO:
-
-
-
-
-
-
-
-
+    _call_static_initializers();
 
     let main: *const u32;
 
