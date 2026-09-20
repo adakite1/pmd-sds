@@ -235,7 +235,7 @@ pub const IAP_CONFIG: u32 = build_c5_mask_extended([
     AccessPermissionExtended::NoAccess,       // Region 2 (027E0000-027FFFFF): Guard area around DTCM and c7 overlays (note that GBATEK's default is 027C0000-027FFFFF, which is a bit different)
     /* 0x027E0000..=0x027E3FFF(..0x027E4000)  c4 DTCM
         0x027E4000..=0x027FEFFF(..0x027FF000)  c2 remainder <== only this region is guarded since the other two parts have higher-numbered MPU regions describing it
-        0x027FF000..=0x027FFFFF(..0x02800000)  c7 Debug Console Work Area
+        0x027FF000..=0x027FFFFF(..0x02800000)  c7 System and SDK Area
         
         Range c2 there also happens to be, interestingly, basically ARM7_MAIN, which is from 0x027E0000..=0x027FEFFF(..0x027FF000, size 0x1F000).
         If you scan the entire asm of the game, you'll find that there are zero occurrences of addresses in the range 0x027E4000..=0x027FEFFF(..0x027FF000)
@@ -265,25 +265,26 @@ pub const IAP_CONFIG: u32 = build_c5_mask_extended([
         -   lower sC: 0x023E4000..=0x023FEFFF(..0x023FF000) || upper x^: 0x027E4000..=0x027FEFFF(..0x027FF000)   (note: arm7 copies some cartridge data from the lower range to somewhere else, and arm9 does some bound checking for some stuff related to... Download Play)
         -  [ARM7 Main RAM (continued)                       || '':           0x1b000 bytes]
         -   lower __: 0x023FF000..=0x023FFFFF(..0x02400000) || upper *^: 0x027FF000..=0x027FFFFF(..0x02800000)   (note: as noted, neither cpus access this region from the lower side)
-        -  [Development work Main RAM                       || '':           0x1000 bytes]
+        -  [↓                                               || '':           0x1000 bytes]
+        -   ⤷ No-caching no-buffering privileged Read-Write System and SDK Area
         - (end at 0x02400000 or 0x02800000)
         -                 => ARM7 Main RAM combined is 0x027E0000..=0x027FEFFF(..0x027FF000)
         ARM9:*
         - ARM9 bread-and-butter is 0x02000000..=0x023DFFFF(..0x023E0000), with static up until 0x0238EC80 and dynamic heap (arena) from there until 0x023E0000.
         - From 0x023E0000, the entire ARM7 Main RAM private region is generally skipped and unused.
-        - Then at the top of the lower mirror is the development work area 0x023FF000..=0x023FFFFF(..0x02400000, or c7 - 0x400000). This isn't used by arm9 either because
-            arm9 system code prefers the *top* mirror for this range instead. That's the same for arm7. Both processors access the system and development work area here
+        - Then at the top of the lower mirror is the System and SDK area 0x023FF000..=0x023FFFFF(..0x02400000, or c7 - 0x400000). This isn't used by arm9 either because
+            arm9 system code prefers the *top* mirror for this range instead. That's the same for arm7. Both processors access the area here
             entirely through the upper mirror. (This is checked to be the case through looking at all literals, and there are *zero* literals referencing the lower range.)
         - There *are no* references (at least looking at literals) to 0x02400000..=0x027DFFFF(..0x027E0000) in arm9, when arm9 uses its own massive Main RAM memory area, it
             *always* uses the lower mirror.
         - DTCM.
         - Now the upper mirror of ARM7 Main RAM is skipped and completely unused (there are *zero* literals referencing this region, again, checked via script form the assembly),
-            and we come back at 0x027FF000 where there are some system code that uses the region for system work and development work. As mentioned before, this upper mirror
+            and we come back at 0x027FF000 where there are some system code that uses the region for system and SDK states and values. As mentioned before, this upper mirror
             of this range is favored by both CPUs for accessing this region.
         - ARM9 seems to avoid both mirrors of the ARM7 private Main RAM region *by convention* (nothing enforces, in particular, access to the lower mirror, as the MPU only protects the upper one),
             with the upper one completely non-appearing (blocked by MPU) while the lower one appearing as constants here and there without memory load or store.
-        - Furthermore, as stated, the Main RAM above that, from 0x027FF000 to 0x027FFFFF, also seems to be used by system-related ARM9 code only, and only used by this upper mirror with no literals referencing
-            the lower mirror at *all*. Given that the upper mirror is only its own distinct memory on an 8 MiB Debug Console, as mentioned earlier, this is thus likely to be reserved for non-final debugging builds.
+        - Furthermore, as stated, the Main RAM above that, from 0x027FF000 to 0x027FFFFF, also seems to be used by system-related code only, and only used by this upper mirror with no literals referencing
+            the lower mirror at *all*.
         ARM7:^
         - ARM7 bread-and-butter is 0x027E0000..=0x027FEFFF(..0x027FF000), with substantial use beyond that from 0x027FF000..=0x027FFFFF(..0x02800000) as well.
         - Within 0x02000000 to 0x02800000, there are no literals whatsoever anywhere else, *EXCEPT*:
@@ -293,11 +294,12 @@ pub const IAP_CONFIG: u32 = build_c5_mask_extended([
     AccessPermissionExtended::NoAccess,       // Region 4 (027E0000-027E3FFF): DTCM (Execute-Never) (Higher MPU priority than c1 and c2)
     AccessPermissionExtended::PrivRwUserNone, // Region 5 (01000000-01FFFFFF): Describes the MPU permissions for the ITCM mirrors between range 0x01000000..0x01FFFFFF (upper 16 MiB of the full 32 MiB ITCM virtual window) (note that the linker script puts the ITCM image inside this range, so these permissions apply by default)
     AccessPermissionExtended::PrivRoUserNone, // Region 6 (FFFF0000-FFFF7FFF): BIOS ROM (Fetch only) (Only about ~3 KiB used according to GBATEK, exception vectors at 0xffff0000)
-    AccessPermissionExtended::NoAccess,       // Region 7 (027FF000-027FFFFF): Debug Console Work Area (Execute-Never)
-    /* Considering that r7 would only have its own real special memory region on an 8 MiB Main RAM debug-console,
-        this is likely a debug-console and debugger work area. You can't run code from it, privileged data
-        access is read-and-write, and both caching and write buffering is disables, which is exactly what
-        you'd want since you want the debugger to observe the same contents in its work area as the CPU at all times (you want to get live data, and since you're in development phase the performance benefit of caching does not matter).
+    AccessPermissionExtended::NoAccess,       // Region 7 (027FF000-027FFFFF): System and SDK Area (Execute-Never)
+    /* This area is not accessible from user-mode and only accessible through privileged modes. You also can't run any code from it,
+        and both caching and write buffering are disabled. This is where a lot of lower-level system code and SDK related code put important
+        data related to the running system. Given that, it would be very helpful if such an area had no stale reads across the two CPUs
+        and strict permissions as well, which is what we see, so this is the System and SDK Area. Plenty of SDK functions access
+        this all the time.
 
         GBATEK notes this as Shared Work instead but this is *NOT* the same as the one controlled by WRAMCNT, which
         can be 0 KiB, 16 KiB, or 32 KiB, and goes from 0x03000000 to 0x03FFFFFF.
@@ -320,12 +322,12 @@ pub const DAP_CONFIG: u32 = build_c5_mask_extended([
     AccessPermissionExtended::NoAccess,       // Region 2 (027E0000-027FFFFF): Guard area around DTCM and c7 overlays (note that GBATEK's default is 027C0000-027FFFFF, which is a bit different)
     /* 0x027E0000..0x027E3FFF  c4 DTCM
         0x027E4000..0x027FEFFF  c2 remainder <== only this region is guarded since the other two parts have higher-numbered MPU regions describing it
-        0x027FF000..0x027FFFFF  c7 Debug Console Work Area */
+        0x027FF000..0x027FFFFF  c7 System and SDK Area */
     AccessPermissionExtended::PrivRwUserNone, // Region 3 (08000000-0FFFFFFF): GBA Slot (RW) (GBA cartridge ROM begins at 08000000, with max 32 MiB. GBA cartridge RAM is at 0A000000, max 64 KiB.)
     AccessPermissionExtended::PrivRwUserNone, // Region 4 (027E0000-027E3FFF): DTCM (Execute-Never) (Higher MPU priority than c1 and c2)
     AccessPermissionExtended::PrivRwUserNone, // Region 5 (01000000-01FFFFFF): Describes the MPU permissions for the ITCM mirrors between range 0x01000000..0x01FFFFFF (upper 16 MiB of the full 32 MiB ITCM virtual window) (note that the linker script puts the ITCM image inside this range, so these permissions apply by default)
     AccessPermissionExtended::PrivRoUserNone, // Region 6 (FFFF0000-FFFF7FFF): BIOS ROM (Write-Protected)
-    AccessPermissionExtended::PrivRwUserNone, // Region 7 (027FF000-027FFFFF): Debug Console Work Area (RW)
+    AccessPermissionExtended::PrivRwUserNone, // Region 7 (027FF000-027FFFFF): System and SDK Area (RW)
 ]);
 const _: () = assert!(DAP_CONFIG == 0x15111011);
 
