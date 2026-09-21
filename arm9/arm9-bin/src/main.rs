@@ -1051,12 +1051,16 @@ pub extern "C" fn _start() -> ! {
     }
     clear_module_bss();
     
-
-    //TODO:
-
-    
-
-
+    unsafe {
+        const DEBUG_RELATED_ADDR: u32 = 0x027fff9c;
+        asm!(
+            "ldr {loaded_addr}, ={addr}",
+            "str {zero}, [{loaded_addr}]",
+            addr = const DEBUG_RELATED_ADDR,
+            zero = in(reg) 0u32,
+            loaded_addr = out(reg) _,
+        );
+    }
 
     unsafe {
         core::intrinsics::volatile_store(
