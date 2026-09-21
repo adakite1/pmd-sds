@@ -6,4 +6,5 @@ edition = "2024"
 [lib]
 name = "c_snow_sdk"
 
-[dependencies]
+[build-dependencies]
+cfg_aliases = "0.2"

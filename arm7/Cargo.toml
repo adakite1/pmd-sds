@@ -2,7 +2,7 @@ cargo-features = ["panic-immediate-abort"]
 
 [workspace]
 resolver = "3"
-members = ["arm7-bin", "c-snow-sdk"]
+members = ["arm7-bin"]
 default-members = ["arm7-bin"]
 
 [profile.release]

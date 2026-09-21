@@ -1,0 +1,13 @@
+cargo-features = ["panic-immediate-abort"]
+
+[workspace]
+resolver = "3"
+members = ["c-snow-sdk", "dsemm"]
+default-members = []
+
+[profile.release]
+panic = "immediate-abort"
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+debug = true  # these disappear later during ELF flattening
