@@ -336,7 +336,7 @@ pub extern "C" fn _call_static_initializers() {
 const NOT_EXCEPTION_VEC_TABLE_UNDEF_MEM: usize = 0xffff0000;
 
 #[unsafe(no_mangle)]
-#[unsafe(link_section = ".text.crt0")]
+#[unsafe(link_section = ".text.crt0.entry")]
 pub extern "C" fn _start() -> ! {
     ime_off();
     clear_arm7_wram_range();

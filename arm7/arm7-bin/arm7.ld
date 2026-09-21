@@ -28,6 +28,7 @@ SECTIONS {
     __arm7_main_base = ORIGIN(ARM7_MAIN);
 
     .crt0 0x02380000 : {
+        KEEP(*(.text.crt0.entry))
         KEEP(*(.text.crt0))
     } > ARM7_STATIC
 

@@ -25,6 +25,7 @@ SECTIONS {
 
     /* .text, SDK order should be: crt0, game code, libs */
     .text 0x02000800 : {
+        KEEP(*(.text.crt0.entry))
         KEEP(*(.text.crt0))
         *(.text .text.*)
         *(.glue_7 .glue_7t) /* ARM-to-Thumb and Thumb-to-ARM interworking helper code */

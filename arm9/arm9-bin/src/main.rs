@@ -999,7 +999,7 @@ pub extern "C" fn _call_static_initializers() {
 const EXCEPTION_VEC_TABLE: usize = 0xffff0000;
 
 #[unsafe(no_mangle)]
-#[unsafe(link_section = ".text.crt0")]
+#[unsafe(link_section = ".text.crt0.entry")]
 pub extern "C" fn _start() -> ! {
     let mut reg_base = linker_addr(&raw const __reg_base);
     unsafe { asm!("", inout("ip") reg_base); /* prevent llvm constant-folding */ }
