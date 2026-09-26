@@ -1,8 +1,8 @@
 use core::arch::naked_asm;
 
 #[cfg(not(target_feature = "thumb-mode"))]
-#[unsafe(no_mangle)]
 #[cfg_attr(armv4t, unsafe(link_section = ".text.wram.__aeabi_uread4"))]
+#[unsafe(no_mangle)]
 #[unsafe(naked)]
 pub unsafe extern "C" fn __aeabi_uread4(address: *const u8) -> i32 {
     naked_asm!(
@@ -18,8 +18,8 @@ pub unsafe extern "C" fn __aeabi_uread4(address: *const u8) -> i32 {
 }
 
 #[cfg(target_feature = "thumb-mode")]
-#[unsafe(no_mangle)]
 #[cfg_attr(armv4t, unsafe(link_section = ".text.wram.__aeabi_uread4"))]
+#[unsafe(no_mangle)]
 #[unsafe(naked)]
 pub unsafe extern "C" fn __aeabi_uread4(address: *const u8) -> i32 {
     naked_asm!(
@@ -37,8 +37,8 @@ pub unsafe extern "C" fn __aeabi_uread4(address: *const u8) -> i32 {
     );
 }
 
-#[unsafe(no_mangle)]
 #[cfg_attr(armv4t, unsafe(link_section = ".text.wram.__aeabi_uwrite4"))]
+#[unsafe(no_mangle)]
 #[unsafe(naked)]
 pub unsafe extern "C" fn __aeabi_uwrite4(value: i32, address: *mut u8) -> i32 {
     naked_asm!(
@@ -54,8 +54,8 @@ pub unsafe extern "C" fn __aeabi_uwrite4(value: i32, address: *mut u8) -> i32 {
 }
 
 #[cfg(not(target_feature = "thumb-mode"))]
-#[unsafe(no_mangle)]
 #[cfg_attr(armv4t, unsafe(link_section = ".text.wram.__aeabi_uread8"))]
+#[unsafe(no_mangle)]
 #[unsafe(naked)]
 pub unsafe extern "C" fn __aeabi_uread8(address: *const u8) -> i64 {
     naked_asm!(
@@ -79,8 +79,8 @@ pub unsafe extern "C" fn __aeabi_uread8(address: *const u8) -> i64 {
 }
 
 #[cfg(target_feature = "thumb-mode")]
-#[unsafe(no_mangle)]
 #[cfg_attr(armv4t, unsafe(link_section = ".text.wram.__aeabi_uread8"))]
+#[unsafe(no_mangle)]
 #[unsafe(naked)]
 pub unsafe extern "C" fn __aeabi_uread8(address: *const u8) -> i64 {
     naked_asm!(
@@ -109,8 +109,8 @@ pub unsafe extern "C" fn __aeabi_uread8(address: *const u8) -> i64 {
     );
 }
 
-#[unsafe(no_mangle)]
 #[cfg_attr(armv4t, unsafe(link_section = ".text.wram.__aeabi_uwrite8"))]
+#[unsafe(no_mangle)]
 #[unsafe(naked)]
 pub unsafe extern "C" fn __aeabi_uwrite8(value: i64, address: *mut u8) -> i64 {
     naked_asm!(

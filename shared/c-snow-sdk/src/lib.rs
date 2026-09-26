@@ -7,24 +7,24 @@
 mod helpers;
 
 #[cfg(armv4t)]
-#[unsafe(no_mangle)]
 #[unsafe(link_section = ".text.wram")]
+#[unsafe(no_mangle)]
 pub extern "C" fn HardwareInterrupt() -> ! {
     core::hint::black_box(2+2);
     panic!();
 }
 
 #[cfg(armv4t)]
-#[unsafe(no_mangle)]
 #[unsafe(link_section = ".text.wram")]
+#[unsafe(no_mangle)]
 pub extern "C" fn SnowSpMain() -> ! {
     core::hint::black_box(1+1);
     panic!();
 }
 
 #[cfg(armv5te)]
-#[unsafe(no_mangle)]
 #[unsafe(link_section = ".text.itcm")]
+#[unsafe(no_mangle)]
 pub extern "C" fn HardwareInterrupt() -> ! {
     core::hint::black_box(2+2);
     panic!();
