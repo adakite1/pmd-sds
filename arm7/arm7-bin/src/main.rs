@@ -192,7 +192,7 @@ struct AutoloadEntry {
 }
 
 #[unsafe(no_mangle)]
-#[unsafe(link_section = ".text.crt0")]
+#[unsafe(link_section = ".text.origaddr.02380118")]
 pub extern "C" fn do_autoload() -> ! {
     let module_params = unsafe { &*(linker_addr(&raw const __module_params) as *const ModuleParams) };
     let &ModuleParams { autoload_infos_start: mut current_entry_ptr, autoload_infos_end, autoload_blocks: mut current_src_start, .. } = module_params;
@@ -265,7 +265,7 @@ fn clear_module_bss() {
 const HW_MTEST_MRAMDTCTDSZ_FLAG: usize = 0x027ffffa; /* *mut u16 */
 
 #[unsafe(no_mangle)]
-#[unsafe(link_section = ".text.crt0")]
+#[unsafe(link_section = ".text.origaddr.0238018C")]
 pub extern "C" fn test_memory() -> ! {
     let mut result = 1;
 
@@ -336,7 +336,7 @@ pub extern "C" fn _call_static_initializers() {
 const NOT_EXCEPTION_VEC_TABLE_UNDEF_MEM: usize = 0xffff0000;
 
 #[unsafe(no_mangle)]
-#[unsafe(link_section = ".text.crt0.entry")]
+#[unsafe(link_section = ".text.origaddr.02380000")]
 pub extern "C" fn _start() -> ! {
     ime_off();
     clear_arm7_wram_range();

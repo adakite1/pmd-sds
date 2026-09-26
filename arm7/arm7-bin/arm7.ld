@@ -9,8 +9,6 @@ MEMORY {
 
     /* 96K contiguous block: 32K shared WRAM mirror (0x037F8000-0x037FFFFF)
         + 64K ARM7-private WRAM (0x03800000-0x0380FFFF).
-        That shared lower half only takes effect once ARM9 sets WRAMCNT to share 32K of the WRAM.
-        Most of ARM7 is here.
         Also the stack lives at the top and is set by crt0:
         SVC `0x0380FFC0`, IRQ `0x0380FF80`, SYS `0x0380FB7C`
         and the hardcoded IRQ handler pointer is at 0x0380FFFC. */
@@ -28,9 +26,10 @@ SECTIONS {
     __arm7_main_base = ORIGIN(ARM7_MAIN);
 
     .crt0 0x02380000 : {
-        KEEP(*(.text.crt0.entry))
+        *(SORT_BY_NAME(.text.origaddr.0238*))
         KEEP(*(.text.crt0))
     } > ARM7_STATIC
+    ASSERT(_start == 0x02380000, "_start must be at 0x02380000")
 
     .module_params : ALIGN(4) {
         __module_params = .;
@@ -47,16 +46,13 @@ SECTIONS {
 
     /* WRAM AUTOLOAD */
 
-    /* Use #[link_section = "section label like .main.text"] to explicitly place code in the MAIN region instead,
-        but otherwise, everything (.text, .rodata, .data, .bss) goes by default into WRAM. */
-
     /* The SDK's section order: .text, exception table, .init, .rodata,
        .ctor/.sinit, .data, .bss */
     
     .wram.text : ALIGN(4) {
         __wram_start = .;
+        *(SORT_BY_NAME(.wram.text.origaddr.*))
         *(.wram.text .wram.text.*)
-        *(.text .text.*)            /* unattributed code defaults to WRAM */
         *(.glue_7 .glue_7t)
     } > ARM7_WRAM AT> ARM7_STATIC
 
@@ -73,8 +69,8 @@ SECTIONS {
     } > ARM7_WRAM AT> ARM7_STATIC
 
     .wram.rodata : ALIGN(4) {
+        *(SORT_BY_NAME(.wram.rodata.origaddr.*))
         *(.wram.rodata .wram.rodata.*)
-        *(.rodata .rodata.*)        /* unattributed rodata defaults to WRAM */
     } > ARM7_WRAM AT> ARM7_STATIC
 
     /* This needs to be manually handled by crt0 like .bss (it's an array of function pointers that crt0 has to call one by one),
@@ -88,9 +84,8 @@ SECTIONS {
     } > ARM7_WRAM AT> ARM7_STATIC
 
     .wram.data : ALIGN(4) {
+        *(SORT_BY_NAME(.wram.data.origaddr.*))
         *(.wram.data .wram.data.*)
-        *(.data .data.*)            /* unattributed data defaults to WRAM */
-        *(.sdata .sdata.*)
         . = ALIGN(4);
         __wram_end = .;
     } > ARM7_WRAM AT> ARM7_STATIC
@@ -98,9 +93,8 @@ SECTIONS {
     /* .bss (no data, should be zeroed by crt0) */
     .wram.bss (NOLOAD) : ALIGN(4) {
         __wram_bss_start = .;
+        *(SORT_BY_NAME(.wram.bss.origaddr.*))
         *(.wram.bss .wram.bss.*)
-        *(.bss .bss.* COMMON)      /* unattributed bss defaults to WRAM */
-        *(.sbss .sbss.*)
         . = ALIGN(4);
         __wram_bss_end = .;
     } > ARM7_WRAM
@@ -109,14 +103,17 @@ SECTIONS {
 
     .main.text : ALIGN(4) {
         __main_start = .;
+        *(SORT_BY_NAME(.main.text.origaddr.*))
         *(.main.text .main.text.*)
     } > ARM7_MAIN AT> ARM7_STATIC
 
     .main.rodata : ALIGN(4) {
+        *(SORT_BY_NAME(.main.rodata.origaddr.*))
         *(.main.rodata .main.rodata.*)
     } > ARM7_MAIN AT> ARM7_STATIC
 
     .main.data : ALIGN(4) {
+        *(SORT_BY_NAME(.main.data.origaddr.*))
         *(.main.data .main.data.*)
         . = ALIGN(4);
         __main_end = .;
@@ -124,6 +121,7 @@ SECTIONS {
 
     .main.bss (NOLOAD) : ALIGN(4) {
         __main_bss_start = .;
+        *(SORT_BY_NAME(.main.bss.origaddr.*))
         *(.main.bss .main.bss.*)
         . = ALIGN(4);
         __main_bss_end = .;
@@ -159,9 +157,35 @@ SECTIONS {
     __svc_stack_top = __wram_top - 0x40; /* 0x03810000 - 0x40 = 0x380FFC0 */
     __irq_stack_top = __wram_top - 0x80; /* 0x03810000 - 0x80 = 0x380FF80 */
     __irq_stack_size = 0x400;
+    __sys_stack_size = 0x400;
     __system_stack_pointer = __irq_stack_top - __irq_stack_size - 4; /* (unused label, for reference) 0x380FF80 - 0x400 - 4 = 0x380FB7C (put initial sp one word below boundary so first push/store is at the boundary word) */
     /* alignment: [svc align 8, irq align 8, sys align 4 only] */
     __irq_handler_pointer = __wram_top - 4; /* 0x03810000 - 4 = 0x380FFFC */
+    ASSERT(__wram_bss_end <= __system_stack_pointer - __sys_stack_size, "WRAM data/bss overlaps the stacks")
+
+    .debug_abbrev 0 : { *(.debug_abbrev) }
+    .debug_addr 0 : { *(.debug_addr) }
+    .debug_aranges 0 : { *(.debug_aranges) }
+    .debug_frame 0 : { *(.debug_frame) }
+    .debug_info 0 : { *(.debug_info) }
+    .debug_line 0 : { *(.debug_line) }
+    .debug_line_str 0 : { *(.debug_line_str) }
+    .debug_loc 0 : { *(.debug_loc) }
+    .debug_loclists 0 : { *(.debug_loclists) }
+    .debug_macinfo 0 : { *(.debug_macinfo) }
+    .debug_macro 0 : { *(.debug_macro) }
+    .debug_names 0 : { *(.debug_names) }
+    .debug_pubnames 0 : { *(.debug_pubnames) }
+    .debug_pubtypes 0 : { *(.debug_pubtypes) }
+    .debug_ranges 0 : { *(.debug_ranges) }
+    .debug_rnglists 0 : { *(.debug_rnglists) }
+    .debug_str 0 : { *(.debug_str) }
+    .debug_str_offsets 0 : { *(.debug_str_offsets) }
+    .debug_types 0 : { *(.debug_types) }
+    .ARM.attributes 0 : { KEEP(*(.ARM.attributes)) }
+    .symtab 0 : { *(.symtab) }
+    .strtab 0 : { *(.strtab) }
+    .shstrtab 0 : { *(.shstrtab) }
 
     /DISCARD/ : {
         *(.ARM.extab*)

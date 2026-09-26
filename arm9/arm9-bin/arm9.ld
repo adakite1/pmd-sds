@@ -25,11 +25,12 @@ SECTIONS {
 
     /* .text, SDK order should be: crt0, game code, libs */
     .text 0x02000800 : {
-        KEEP(*(.text.crt0.entry))
+        *(SORT_BY_NAME(.text.origaddr.*))
         KEEP(*(.text.crt0))
         *(.text .text.*)
         *(.glue_7 .glue_7t) /* ARM-to-Thumb and Thumb-to-ARM interworking helper code */
     } > MAIN_RAM
+    ASSERT(_start == 0x02000800, "_start must be at 0x02000800")
 
     /* Empty sentinel to avoid a linker error for .ARM.exidx specifically
         if no unwinding is used (panic = "abort") the section should stay empty. */
@@ -44,6 +45,7 @@ SECTIONS {
     } > MAIN_RAM
 
     .rodata : ALIGN(4) {
+        *(SORT_BY_NAME(.rodata.origaddr.*))
         *(.rodata .rodata.*)
     } > MAIN_RAM
 
@@ -58,6 +60,7 @@ SECTIONS {
 
     /* initialized statics */
     .data : ALIGN(4) {
+        *(SORT_BY_NAME(.data.origaddr.*))
         *(.data .data.*)
         *(.sdata .sdata.*)
     } > MAIN_RAM
@@ -92,14 +95,17 @@ SECTIONS {
     .itcm : ALIGN(4) {
         /* crt0 should copy the range from LMA... */
         __itcm_start = .; /* ...to __itcm_start..__itcm_end (VMA), before calling any ITCM-resident code. */
+        *(SORT_BY_NAME(.itcm.text.origaddr.*))
         *(.itcm .itcm.text .itcm.text.*)
     } > ITCM AT> MAIN_RAM
 
     .itcm.rodata : ALIGN(4) {
+        *(SORT_BY_NAME(.itcm.rodata.origaddr.*))
         *(.itcm.rodata .itcm.rodata.*)
     } > ITCM AT> MAIN_RAM
 
     .itcm.data : ALIGN(4) {
+        *(SORT_BY_NAME(.itcm.data.origaddr.*))
         *(.itcm.data .itcm.data.*)
         . = ALIGN(4);
         __itcm_end = .;
@@ -107,6 +113,7 @@ SECTIONS {
 
     .itcm_bss (NOLOAD) : ALIGN(4) {
         __itcm_bss_start = .;
+        *(SORT_BY_NAME(.itcm.bss.origaddr.*))
         *(.itcm.bss .itcm.bss.*)
         . = ALIGN(4);
         __itcm_bss_end = .;
@@ -114,14 +121,16 @@ SECTIONS {
 
     .dtcm : ALIGN(4) {
         __dtcm_start = .;
-        *(.dtcm .dtcm.text .dtcm.text.*)
+        *(.dtcm)
     } > DTCM AT> MAIN_RAM
 
     .dtcm.rodata : ALIGN(4) {
+        *(SORT_BY_NAME(.dtcm.rodata.origaddr.*))
         *(.dtcm.rodata .dtcm.rodata.*)
     } > DTCM AT> MAIN_RAM
 
     .dtcm.data : ALIGN(4) {
+        *(SORT_BY_NAME(.dtcm.data.origaddr.*))
         *(.dtcm.data .dtcm.data.*)
         . = ALIGN(4);
         __dtcm_end = .;
@@ -129,6 +138,7 @@ SECTIONS {
 
     .dtcm_bss (NOLOAD) : ALIGN(4) {
         __dtcm_bss_start = .;
+        *(SORT_BY_NAME(.dtcm.bss.origaddr.*))
         *(.dtcm.bss .dtcm.bss.*)
         . = ALIGN(4);
         __dtcm_bss_end = .;
@@ -171,6 +181,7 @@ SECTIONS {
     __system_stack_pointer = __svc_irq_stack_boundary - __irq_stack_size - 4; /* (unused label, for reference) */
     /* alignment: [svc align 8, irq align 4 only, sys align 4 only] */
     __irq_handler_pointer = __dtcm_top - 4; /* 0x027E4000 - 4 = 0x27E3FFC */
+    ASSERT(__dtcm_bss_end <= __system_stack_pointer, "DTCM data/bss overlaps the stacks")
 
     .static_footer : ALIGN(4) { /* when building the ROM, arm9_size should be set to exclude this footer (image_len - 12 bytes) */
         LONG(0xDEC00621);
@@ -187,6 +198,7 @@ SECTIONS {
         actually overlap the LMA section, keeping it like this for now. */
     .bss (NOLOAD) : ALIGN(4) {
         __bss_start = .;
+        *(SORT_BY_NAME(.bss.origaddr.*))
         *(.bss .bss.* COMMON)
         *(.sbss .sbss.*)
         . = ALIGN(4);

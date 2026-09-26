@@ -332,7 +332,7 @@ pub const DAP_CONFIG: u32 = build_c5_mask_extended([
 const _: () = assert!(DAP_CONFIG == 0x15111011);
 
 #[unsafe(no_mangle)]
-#[unsafe(link_section = ".text.crt0")]
+#[unsafe(link_section = ".text.origaddr.02000AB0")]
 pub extern "C" fn init_cp15() -> ! {
     unsafe {
         let mut sctlr: u32;
@@ -641,7 +641,7 @@ struct BuildInfo {
 }
 
 #[unsafe(no_mangle)]
-#[unsafe(link_section = ".text.crt0")]
+#[unsafe(link_section = ".text.origaddr.02000970")]
 fn uncompress_backward(ptr: *const u32) {
     /* ENTERED WITH ≡4 ALIGNMENT. */
 
@@ -886,7 +886,7 @@ struct AutoloadEntry {
 }
 
 #[unsafe(no_mangle)]
-#[unsafe(link_section = ".text.crt0")]
+#[unsafe(link_section = ".text.origaddr.02000A1C")]
 pub extern "C" fn do_autoload() -> ! {
     let build_info = unsafe { &*(linker_addr(&raw const __build_info) as *const BuildInfo) };
     let &BuildInfo { autoload_infos_start: mut current_entry_ptr, autoload_infos_end, autoload_blocks: mut current_src_start, .. } = build_info;
@@ -999,7 +999,7 @@ pub extern "C" fn _call_static_initializers() {
 const EXCEPTION_VEC_TABLE: usize = 0xffff0000;
 
 #[unsafe(no_mangle)]
-#[unsafe(link_section = ".text.crt0.entry")]
+#[unsafe(link_section = ".text.origaddr.02000800")]
 pub extern "C" fn _start() -> ! {
     let mut reg_base = linker_addr(&raw const __reg_base);
     unsafe { asm!("", inout("ip") reg_base); /* prevent llvm constant-folding */ }

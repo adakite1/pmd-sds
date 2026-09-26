@@ -13,6 +13,7 @@ build-std-features = [
 rustflags = [
     "-Clink-arg=-Tarm7.ld",
     "-Clink-arg=--nmagic",
+    "-Clink-arg=--orphan-handling=error",
     "-Ctarget-cpu=arm7tdmi",
     "-Crelocation-model=static", # PIC (Position-Independent Code) requires additional sections like .got (global offset table) to work. No need for that, we just want fixed addresses
 ]
