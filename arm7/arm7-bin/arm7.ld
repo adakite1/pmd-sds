@@ -49,7 +49,7 @@ SECTIONS {
     /* The SDK's section order: .text, exception table, .init, .rodata,
        .ctor/.sinit, .data, .bss */
     
-    .wram.text : ALIGN(4) {
+    .text.wram : ALIGN(4) {
         __wram_start = .;
         *(SORT_BY_NAME(.text.wram.origaddr.*))
         *(.text.wram .text.wram.*)
@@ -70,7 +70,7 @@ SECTIONS {
         *(.init)
     } > ARM7_WRAM AT> ARM7_STATIC
 
-    .wram.rodata : ALIGN(4) {
+    .rodata.wram : ALIGN(4) {
         *(SORT_BY_NAME(.rodata.wram.origaddr.*))
         *(.rodata.wram .rodata.wram.*)
         *(.rodata._ZN4core*)
@@ -88,7 +88,7 @@ SECTIONS {
         __init_array_end = .;
     } > ARM7_WRAM AT> ARM7_STATIC
 
-    .wram.data : ALIGN(4) {
+    .data.wram : ALIGN(4) {
         *(SORT_BY_NAME(.data.wram.origaddr.*))
         *(.data.wram .data.wram.*)
         *(.data._ZN4core*)
@@ -98,7 +98,7 @@ SECTIONS {
     } > ARM7_WRAM AT> ARM7_STATIC
 
     /* .bss (no data, should be zeroed by crt0) */
-    .wram.bss (NOLOAD) : ALIGN(4) {
+    .bss.wram (NOLOAD) : ALIGN(4) {
         __wram_bss_start = .;
         *(SORT_BY_NAME(.bss.wram.origaddr.*))
         *(.bss.wram .bss.wram.*)
@@ -110,25 +110,25 @@ SECTIONS {
 
     /* MAIN AUTOLOAD */
 
-    .main.text : ALIGN(4) {
+    .text.main : ALIGN(4) {
         __main_start = .;
         *(SORT_BY_NAME(.text.main.origaddr.*))
         *(.text.main .text.main.*)
     } > ARM7_MAIN AT> ARM7_STATIC
 
-    .main.rodata : ALIGN(4) {
+    .rodata.main : ALIGN(4) {
         *(SORT_BY_NAME(.rodata.main.origaddr.*))
         *(.rodata.main .rodata.main.*)
     } > ARM7_MAIN AT> ARM7_STATIC
 
-    .main.data : ALIGN(4) {
+    .data.main : ALIGN(4) {
         *(SORT_BY_NAME(.data.main.origaddr.*))
         *(.data.main .data.main.*)
         . = ALIGN(4);
         __main_end = .;
     } > ARM7_MAIN AT> ARM7_STATIC
 
-    .main.bss (NOLOAD) : ALIGN(4) {
+    .bss.main (NOLOAD) : ALIGN(4) {
         __main_bss_start = .;
         *(SORT_BY_NAME(.bss.main.origaddr.*))
         *(.bss.main .bss.main.*)
@@ -152,7 +152,7 @@ SECTIONS {
         LONG(__main_bss_end - __main_bss_start);
     } > ARM7_STATIC AT> ARM7_STATIC  /* force explicit, AT> above is sticky */
 
-    __autoload_data = LOADADDR(.wram.text); /* first source blob byte (LMA) */
+    __autoload_data = LOADADDR(.text.wram); /* first source blob byte (LMA) */
     __autoload_table_addr = LOADADDR(.autoload_table); /* where is the table */
     __autoload_table_size = SIZEOF(.autoload_table);
 

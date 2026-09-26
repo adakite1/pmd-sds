@@ -96,26 +96,26 @@ SECTIONS {
         copies it over for running.
     */
 
-    .itcm : ALIGN(4) {
+    .text.itcm : ALIGN(4) {
         /* crt0 should copy the range from LMA... */
         __itcm_start = .; /* ...to __itcm_start..__itcm_end (VMA), before calling any ITCM-resident code. */
         *(SORT_BY_NAME(.text.itcm.origaddr.*))
         *(.itcm .text.itcm .text.itcm.*)
     } > ITCM AT> MAIN_RAM
 
-    .itcm.rodata : ALIGN(4) {
+    .rodata.itcm : ALIGN(4) {
         *(SORT_BY_NAME(.rodata.itcm.origaddr.*))
         *(.rodata.itcm .rodata.itcm.*)
     } > ITCM AT> MAIN_RAM
 
-    .itcm.data : ALIGN(4) {
+    .data.itcm : ALIGN(4) {
         *(SORT_BY_NAME(.data.itcm.origaddr.*))
         *(.data.itcm .data.itcm.*)
         . = ALIGN(4);
         __itcm_end = .;
     } > ITCM AT> MAIN_RAM
 
-    .itcm_bss (NOLOAD) : ALIGN(4) {
+    .bss.itcm (NOLOAD) : ALIGN(4) {
         __itcm_bss_start = .;
         *(SORT_BY_NAME(.bss.itcm.origaddr.*))
         *(.bss.itcm .bss.itcm.*)
@@ -123,24 +123,20 @@ SECTIONS {
         __itcm_bss_end = .;
     } > ITCM
 
-    .dtcm : ALIGN(4) {
+    .rodata.dtcm : ALIGN(4) {
         __dtcm_start = .;
-        *(.dtcm)
-    } > DTCM AT> MAIN_RAM
-
-    .dtcm.rodata : ALIGN(4) {
         *(SORT_BY_NAME(.rodata.dtcm.origaddr.*))
         *(.rodata.dtcm .rodata.dtcm.*)
     } > DTCM AT> MAIN_RAM
 
-    .dtcm.data : ALIGN(4) {
+    .data.dtcm : ALIGN(4) {
         *(SORT_BY_NAME(.data.dtcm.origaddr.*))
-        *(.data.dtcm .data.dtcm.*)
+        *(.dtcm .data.dtcm .data.dtcm.*)
         . = ALIGN(4);
         __dtcm_end = .;
     } > DTCM AT> MAIN_RAM
 
-    .dtcm_bss (NOLOAD) : ALIGN(4) {
+    .bss.dtcm (NOLOAD) : ALIGN(4) {
         __dtcm_bss_start = .;
         *(SORT_BY_NAME(.bss.dtcm.origaddr.*))
         *(.bss.dtcm .bss.dtcm.*)
@@ -163,7 +159,7 @@ SECTIONS {
         LONG(__dtcm_bss_end - __dtcm_bss_start);
     } > MAIN_RAM AT> MAIN_RAM /* force both to use MAIN_RAM, AT> above is sticky */
 
-    __autoload_data = LOADADDR(.itcm); /* where does the first source blob start (LMA start) */
+    __autoload_data = LOADADDR(.text.itcm); /* where does the first source blob start (LMA start) */
     __autoload_table_addr = LOADADDR(.autoload_table); /* where is the table */
     __autoload_table_size = SIZEOF(.autoload_table);
 
