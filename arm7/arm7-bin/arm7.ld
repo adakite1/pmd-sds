@@ -53,6 +53,8 @@ SECTIONS {
         __wram_start = .;
         *(SORT_BY_NAME(.wram.text.origaddr.*))
         *(.wram.text .wram.text.*)
+        *(.text._ZN4core* .text.unlikely._ZN4core*)
+        *libcompiler_builtins-*.rlib:*(.text .text.*)
         *(.glue_7 .glue_7t)
     } > ARM7_WRAM AT> ARM7_STATIC
 
@@ -71,6 +73,9 @@ SECTIONS {
     .wram.rodata : ALIGN(4) {
         *(SORT_BY_NAME(.wram.rodata.origaddr.*))
         *(.wram.rodata .wram.rodata.*)
+        *(.rodata._ZN4core*)
+        *libcompiler_builtins-*.rlib:*(.rodata .rodata.*)
+        *(.rodata..L* .rodata.str* .rodata.cst*)
     } > ARM7_WRAM AT> ARM7_STATIC
 
     /* This needs to be manually handled by crt0 like .bss (it's an array of function pointers that crt0 has to call one by one),
@@ -86,6 +91,8 @@ SECTIONS {
     .wram.data : ALIGN(4) {
         *(SORT_BY_NAME(.wram.data.origaddr.*))
         *(.wram.data .wram.data.*)
+        *(.data._ZN4core*)
+        *libcompiler_builtins-*.rlib:*(.data .data.*)
         . = ALIGN(4);
         __wram_end = .;
     } > ARM7_WRAM AT> ARM7_STATIC
@@ -95,6 +102,8 @@ SECTIONS {
         __wram_bss_start = .;
         *(SORT_BY_NAME(.wram.bss.origaddr.*))
         *(.wram.bss .wram.bss.*)
+        *(.bss._ZN4core*)
+        *libcompiler_builtins-*.rlib:*(.bss .bss.*)
         . = ALIGN(4);
         __wram_bss_end = .;
     } > ARM7_WRAM
