@@ -27,7 +27,8 @@ SECTIONS {
     .text 0x02000800 : {
         *(SORT_BY_NAME(.text.origaddr.*))
         KEEP(*(.text.crt0))
-        *(.text .text.*)
+        *(.text .text.[!i]* .text.i .text.i[!t]* .text.it .text.it[!c]* .text.itc .text.itc[!m]*
+          .text.itcm[!.]*)
         *(.glue_7 .glue_7t) /* ARM-to-Thumb and Thumb-to-ARM interworking helper code */
     } > MAIN_RAM
     ASSERT(_start == 0x02000800, "_start must be at 0x02000800")
@@ -46,7 +47,9 @@ SECTIONS {
 
     .rodata : ALIGN(4) {
         *(SORT_BY_NAME(.rodata.origaddr.*))
-        *(.rodata .rodata.*)
+        *(.rodata .rodata.[!di]* .rodata.i .rodata.i[!t]* .rodata.it .rodata.it[!c]* .rodata.itc
+          .rodata.itc[!m]* .rodata.itcm[!.]* .rodata.d .rodata.d[!t]* .rodata.dt .rodata.dt[!c]* .rodata.dtc
+          .rodata.dtc[!m]* .rodata.dtcm[!.]*)
     } > MAIN_RAM
 
     /* This needs to be manually handled by crt0 like .bss (it's an array of function pointers that crt0 has to call one by one),
@@ -61,7 +64,8 @@ SECTIONS {
     /* initialized statics */
     .data : ALIGN(4) {
         *(SORT_BY_NAME(.data.origaddr.*))
-        *(.data .data.*)
+        *(.data .data.[!di]* .data.i .data.i[!t]* .data.it .data.it[!c]* .data.itc .data.itc[!m]*
+          .data.itcm[!.]* .data.d .data.d[!t]* .data.dt .data.dt[!c]* .data.dtc .data.dtc[!m]* .data.dtcm[!.]*)
         *(.sdata .sdata.*)
     } > MAIN_RAM
 
@@ -95,26 +99,26 @@ SECTIONS {
     .itcm : ALIGN(4) {
         /* crt0 should copy the range from LMA... */
         __itcm_start = .; /* ...to __itcm_start..__itcm_end (VMA), before calling any ITCM-resident code. */
-        *(SORT_BY_NAME(.itcm.text.origaddr.*))
-        *(.itcm .itcm.text .itcm.text.*)
+        *(SORT_BY_NAME(.text.itcm.origaddr.*))
+        *(.itcm .text.itcm .text.itcm.*)
     } > ITCM AT> MAIN_RAM
 
     .itcm.rodata : ALIGN(4) {
-        *(SORT_BY_NAME(.itcm.rodata.origaddr.*))
-        *(.itcm.rodata .itcm.rodata.*)
+        *(SORT_BY_NAME(.rodata.itcm.origaddr.*))
+        *(.rodata.itcm .rodata.itcm.*)
     } > ITCM AT> MAIN_RAM
 
     .itcm.data : ALIGN(4) {
-        *(SORT_BY_NAME(.itcm.data.origaddr.*))
-        *(.itcm.data .itcm.data.*)
+        *(SORT_BY_NAME(.data.itcm.origaddr.*))
+        *(.data.itcm .data.itcm.*)
         . = ALIGN(4);
         __itcm_end = .;
     } > ITCM AT> MAIN_RAM
 
     .itcm_bss (NOLOAD) : ALIGN(4) {
         __itcm_bss_start = .;
-        *(SORT_BY_NAME(.itcm.bss.origaddr.*))
-        *(.itcm.bss .itcm.bss.*)
+        *(SORT_BY_NAME(.bss.itcm.origaddr.*))
+        *(.bss.itcm .bss.itcm.*)
         . = ALIGN(4);
         __itcm_bss_end = .;
     } > ITCM
@@ -125,21 +129,21 @@ SECTIONS {
     } > DTCM AT> MAIN_RAM
 
     .dtcm.rodata : ALIGN(4) {
-        *(SORT_BY_NAME(.dtcm.rodata.origaddr.*))
-        *(.dtcm.rodata .dtcm.rodata.*)
+        *(SORT_BY_NAME(.rodata.dtcm.origaddr.*))
+        *(.rodata.dtcm .rodata.dtcm.*)
     } > DTCM AT> MAIN_RAM
 
     .dtcm.data : ALIGN(4) {
-        *(SORT_BY_NAME(.dtcm.data.origaddr.*))
-        *(.dtcm.data .dtcm.data.*)
+        *(SORT_BY_NAME(.data.dtcm.origaddr.*))
+        *(.data.dtcm .data.dtcm.*)
         . = ALIGN(4);
         __dtcm_end = .;
     } > DTCM AT> MAIN_RAM
 
     .dtcm_bss (NOLOAD) : ALIGN(4) {
         __dtcm_bss_start = .;
-        *(SORT_BY_NAME(.dtcm.bss.origaddr.*))
-        *(.dtcm.bss .dtcm.bss.*)
+        *(SORT_BY_NAME(.bss.dtcm.origaddr.*))
+        *(.bss.dtcm .bss.dtcm.*)
         . = ALIGN(4);
         __dtcm_bss_end = .;
     } > DTCM
@@ -178,7 +182,7 @@ SECTIONS {
     __svc_irq_stack_boundary = __dtcm_top - 0x80; /* 0x027E4000 - 0x80 = 0x27E3F80 */
     __irq_stack_top = __svc_irq_stack_boundary - 4; /* 0x027E4000 - 0x80 - 4 = 0x27E3F7C, importantly: pre-compensate for AAPCS too */
     __irq_stack_size = 0x800;
-    __system_stack_pointer = __svc_irq_stack_boundary - __irq_stack_size - 4; /* (unused label, for reference) */
+    __system_stack_pointer = __svc_irq_stack_boundary - __irq_stack_size - 4; /* 0x27E3F80 - 0x800 - 4 = 0x27E377C */
     /* alignment: [svc align 8, irq align 4 only, sys align 4 only] */
     __irq_handler_pointer = __dtcm_top - 4; /* 0x027E4000 - 4 = 0x27E3FFC */
     ASSERT(__dtcm_bss_end <= __system_stack_pointer, "DTCM data/bss overlaps the stacks")

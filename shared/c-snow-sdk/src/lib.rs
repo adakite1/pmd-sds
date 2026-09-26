@@ -3,8 +3,12 @@
 #![feature(core_intrinsics)]
 #![allow(internal_features)]
 
+#[cfg(any(armv4t, armv5te))]
+mod helpers;
+
 #[cfg(armv4t)]
 #[unsafe(no_mangle)]
+#[unsafe(link_section = ".text.wram")]
 pub extern "C" fn HardwareInterrupt() -> ! {
     core::hint::black_box(2+2);
     panic!();
@@ -12,6 +16,7 @@ pub extern "C" fn HardwareInterrupt() -> ! {
 
 #[cfg(armv4t)]
 #[unsafe(no_mangle)]
+#[unsafe(link_section = ".text.wram")]
 pub extern "C" fn SnowSpMain() -> ! {
     core::hint::black_box(1+1);
     panic!();
@@ -19,7 +24,7 @@ pub extern "C" fn SnowSpMain() -> ! {
 
 #[cfg(armv5te)]
 #[unsafe(no_mangle)]
-#[unsafe(link_section = ".itcm.text")]
+#[unsafe(link_section = ".text.itcm")]
 pub extern "C" fn HardwareInterrupt() -> ! {
     core::hint::black_box(2+2);
     panic!();

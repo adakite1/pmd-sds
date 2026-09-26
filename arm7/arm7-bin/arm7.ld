@@ -51,8 +51,8 @@ SECTIONS {
     
     .wram.text : ALIGN(4) {
         __wram_start = .;
-        *(SORT_BY_NAME(.wram.text.origaddr.*))
-        *(.wram.text .wram.text.*)
+        *(SORT_BY_NAME(.text.wram.origaddr.*))
+        *(.text.wram .text.wram.*)
         *(.text._ZN4core* .text.unlikely._ZN4core*)
         *libcompiler_builtins-*.rlib:*(.text .text.*)
         *(.glue_7 .glue_7t)
@@ -71,8 +71,8 @@ SECTIONS {
     } > ARM7_WRAM AT> ARM7_STATIC
 
     .wram.rodata : ALIGN(4) {
-        *(SORT_BY_NAME(.wram.rodata.origaddr.*))
-        *(.wram.rodata .wram.rodata.*)
+        *(SORT_BY_NAME(.rodata.wram.origaddr.*))
+        *(.rodata.wram .rodata.wram.*)
         *(.rodata._ZN4core*)
         *libcompiler_builtins-*.rlib:*(.rodata .rodata.*)
         *(.rodata..L* .rodata.str* .rodata.cst*)
@@ -80,7 +80,7 @@ SECTIONS {
 
     /* This needs to be manually handled by crt0 like .bss (it's an array of function pointers that crt0 has to call one by one),
         though no_std Rustlang usually doesn't use this (no CPP-style static constructors).
-        Assuming that we'll be sticking to Rustlang for this section I'm gonna just not add the separate ".wram." prefixed options here. */
+        Assuming that we'll be sticking to Rustlang for this section I'm gonna just not add the separate ".*.wram." prefixed options here. */
     .init_array : ALIGN(4) {
         __init_array_start = .;
         KEEP (*(SORT_BY_INIT_PRIORITY(.init_array.*) SORT_BY_INIT_PRIORITY(.ctors.*)))
@@ -89,8 +89,8 @@ SECTIONS {
     } > ARM7_WRAM AT> ARM7_STATIC
 
     .wram.data : ALIGN(4) {
-        *(SORT_BY_NAME(.wram.data.origaddr.*))
-        *(.wram.data .wram.data.*)
+        *(SORT_BY_NAME(.data.wram.origaddr.*))
+        *(.data.wram .data.wram.*)
         *(.data._ZN4core*)
         *libcompiler_builtins-*.rlib:*(.data .data.*)
         . = ALIGN(4);
@@ -100,8 +100,8 @@ SECTIONS {
     /* .bss (no data, should be zeroed by crt0) */
     .wram.bss (NOLOAD) : ALIGN(4) {
         __wram_bss_start = .;
-        *(SORT_BY_NAME(.wram.bss.origaddr.*))
-        *(.wram.bss .wram.bss.*)
+        *(SORT_BY_NAME(.bss.wram.origaddr.*))
+        *(.bss.wram .bss.wram.*)
         *(.bss._ZN4core*)
         *libcompiler_builtins-*.rlib:*(.bss .bss.*)
         . = ALIGN(4);
@@ -112,26 +112,26 @@ SECTIONS {
 
     .main.text : ALIGN(4) {
         __main_start = .;
-        *(SORT_BY_NAME(.main.text.origaddr.*))
-        *(.main.text .main.text.*)
+        *(SORT_BY_NAME(.text.main.origaddr.*))
+        *(.text.main .text.main.*)
     } > ARM7_MAIN AT> ARM7_STATIC
 
     .main.rodata : ALIGN(4) {
-        *(SORT_BY_NAME(.main.rodata.origaddr.*))
-        *(.main.rodata .main.rodata.*)
+        *(SORT_BY_NAME(.rodata.main.origaddr.*))
+        *(.rodata.main .rodata.main.*)
     } > ARM7_MAIN AT> ARM7_STATIC
 
     .main.data : ALIGN(4) {
-        *(SORT_BY_NAME(.main.data.origaddr.*))
-        *(.main.data .main.data.*)
+        *(SORT_BY_NAME(.data.main.origaddr.*))
+        *(.data.main .data.main.*)
         . = ALIGN(4);
         __main_end = .;
     } > ARM7_MAIN AT> ARM7_STATIC
 
     .main.bss (NOLOAD) : ALIGN(4) {
         __main_bss_start = .;
-        *(SORT_BY_NAME(.main.bss.origaddr.*))
-        *(.main.bss .main.bss.*)
+        *(SORT_BY_NAME(.bss.main.origaddr.*))
+        *(.bss.main .bss.main.*)
         . = ALIGN(4);
         __main_bss_end = .;
     } > ARM7_MAIN
@@ -167,7 +167,7 @@ SECTIONS {
     __irq_stack_top = __wram_top - 0x80; /* 0x03810000 - 0x80 = 0x380FF80 */
     __irq_stack_size = 0x400;
     __sys_stack_size = 0x400;
-    __system_stack_pointer = __irq_stack_top - __irq_stack_size - 4; /* (unused label, for reference) 0x380FF80 - 0x400 - 4 = 0x380FB7C (put initial sp one word below boundary so first push/store is at the boundary word) */
+    __system_stack_pointer = __irq_stack_top - __irq_stack_size - 4; /* 0x380FF80 - 0x400 - 4 = 0x380FB7C */
     /* alignment: [svc align 8, irq align 8, sys align 4 only] */
     __irq_handler_pointer = __wram_top - 4; /* 0x03810000 - 4 = 0x380FFFC */
     ASSERT(__wram_bss_end <= __system_stack_pointer - __sys_stack_size, "WRAM data/bss overlaps the stacks")
