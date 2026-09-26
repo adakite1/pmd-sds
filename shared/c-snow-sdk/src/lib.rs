@@ -2,6 +2,9 @@
 #![no_main]
 #![feature(core_intrinsics)]
 #![allow(internal_features)]
+#![allow(non_upper_case_globals)]
+
+use core::cell::UnsafeCell;
 
 #[cfg(any(armv4t, armv5te))]
 mod helpers;
@@ -35,5 +38,127 @@ pub extern "C" fn HardwareInterrupt() -> ! {
 pub extern "C" fn SnowMain() -> ! {
     core::hint::black_box(1+1);
     panic!();
+}
+
+/// Wrapper type for a global variable.
+///
+/// # Safety
+///
+/// If the global is accessed by both CPUs, synchronization needs
+/// to be handled carefully.
+///
+/// Also, **even if a value is only accessed by one CPU, there could
+/// *still be sync issues!!!*** Namely, IRQ (interrupts) can still preempt
+/// normal code, which means that memory might change in between say a
+/// read-compare-write sequence of instructions, where the IRQ might
+/// happen to preempt after the read. In those cases, the pattern is
+/// to disable IRQ first, do the sequence, and then to re-enable
+/// it afterwards.
+///
+/// If the global is touched by neither an interrupt handler nor the
+/// other CPU, it can be treated like a local.
+///
+/// ## I-Cache and D-Cache
+///
+/// While both [`get`](Global::get) and [`set`](Global::set) on [`Global`]
+/// is volatile, this is a separate idea from and does **not** prevent ARM9's
+/// caching unit from providing stale data for shared values with ARM7 or DMA
+/// if it is changed under you.
+///
+/// Though this is less of a concern since in practice, cacheability and bufferability settings in _start
+/// are configured such that only specific regions of virtual memory addresses get cached and buffered.
+///
+/// Effectively,
+///
+/// **Data Side:**
+///
+/// | Address range | Winning region | Cached | Write-back | Access |
+/// |---|---|---|---|---|
+/// | 0x02000000–0x027DFFFF | 1         | yes | yes | RW |
+/// | 0x027E0000–0x027E3FFF | 4 (DTCM)  | no* | no | RW |
+/// | 0x027E4000–0x027FEFFF | 2         | no | no | no access |
+/// | 0x027FF000–0x027FFFFF | 7         | no | no | RW |
+///
+/// *In addition:*
+/// - Region 0 (I/O, palette, VRAM, OAM), region 3 (GBA slot), and region 5 (ITCM mirrors), are all
+/// uncached, with privileged read/write.
+/// - Region 6 (BIOS) is cached, but no write-back as it is privileged read-only (and etched to
+/// silicon as well).  (B=0, technically write-through, but there's no way to write)
+/// - And **everything not covered by a region, including shared WRAM at 0x03000000–0x03FFFFFF,
+/// has no access at all, surprisingly.** So here, shared WRAM can not be accessed by ARM9.
+/// This is mentioned in GBATEK when it discusses its default table, "Above settings do not allow to access Shared Memory at 37F8000h?".
+///
+/// \* TCM accesses literally never go through the cache physically, but GBATEK
+/// recommends turning cache and the write buffer off for TCM regions anyways, which
+/// is what regions 4 and 5 do here.
+///
+/// From the ARM946E-S Technical Reference Manual:
+///
+/// > When you have enabled the I-SRAM, all future ARM9E-S
+/// instruction fetches and data accesses to the I-SRAM address
+/// space cause the I-SRAM to be accessed.
+///
+/// > *When you have enabled the D-SRAM, see Register 9,
+/// Tightly-coupled memory region registers on page* 2-25,
+/// all future read and write accesses to the D-SRAM address
+/// space cause the D-SRAM to be accessed.
+///
+/// **Instruction Side:**
+///
+/// | Address range | Winning region | I-cache | Fetch allowed | Notes |
+/// |---|---|---|---|---|
+/// | 0x00000000–0x00FFFFFF | none (background) | – | no | Lower ITCM mirrors acting as a null-pointer guard (a jump to 0 faults) |
+/// | 0x01000000–0x01FFFFFF | 5 | no | privileged | ITCM mirrors, with code here starting at 0x01FF8000 |
+/// | 0x02000000–0x027DFFFF | 1 | yes | privileged | Both mirrors of Main RAM, including 0x023E0000–0x023FFFFF, the lower mirror of the ARM7-private and system areas |
+/// | 0x027E0000–0x027E3FFF | 4 | no | no | The fetch would bypass the DTCM and hit ARM7-private main RAM since the Instruction Bus (I-Side) is not connected to the DTCM |
+/// | 0x027E4000–0x027FEFFF | 2 | no | no | More ARM7-private main RAM |
+/// | 0x027FF000–0x027FFFFF | 7 | no | no | System and SDK area |
+/// | 0x02800000–0x03FFFFFF | none | – | no | Including the shared WRAM at 0x03000000+ |
+/// | 0x04000000–0x07FFFFFF | 0 | no | privileged | I/O, palette, VRAM, OAM; executing from VRAM is permitted |
+/// | 0x08000000–0x0FFFFFFF | 3 | no | no | GBA slot |
+/// | 0x10000000–0xFFFEFFFF | none | – | no | |
+/// | 0xFFFF0000–0xFFFF7FFF | 6 | yes | privileged (read-only) | BIOS, exception vectors |
+/// | 0xFFFF8000–0xFFFFFFFF | none | – | no | |
+///
+/// **However,** with that said, it is still entirely possible that
+/// code might want to use a buffer or a piece of data within the cached or buffered
+/// memory ranges and still want to have it be accessed from another CPU. Be
+/// aware of when any memory location is being shared, and do a quick check.
+#[repr(transparent)]
+pub struct Global<T>(UnsafeCell<T>);
+
+unsafe impl<T> Sync for Global<T> {}
+
+impl<T> Global<T> {
+    pub const fn new(value: T) -> Self {
+        Self(UnsafeCell::new(value))
+    }
+
+    pub const fn as_ptr(&self) -> *mut T {
+        self.0.get()
+    }
+
+    /// # Safety
+    ///
+    /// **ASSUMES LOCAL.**
+    ///
+    /// Do not nest on the same value or access the same variable again using
+    /// any other method while the reference provided is alive (such as with direct [`get`](Global::get) or [`set`](Global::set)).
+    /// This would would create two mutable references to the same memory, or
+    /// otherwise interact with the value from a second reference when Rustlang
+    /// only expects the one `&mut T`, causing undefined behavior in Rust.
+    pub unsafe fn with<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
+        f(unsafe { &mut *self.0.get() })
+    }
+}
+
+impl<T: Copy> Global<T> {
+    pub fn get(&self) -> T {
+        unsafe { core::intrinsics::volatile_load(self.0.get()) }
+    }
+
+    pub fn set(&self, value: T) {
+        unsafe { core::intrinsics::volatile_store(self.0.get(), value) }
+    }
 }
 
