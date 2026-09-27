@@ -10,7 +10,7 @@
   "runOnSave.commands": [
     {
       "match": "^(?!.*/(xtask|target)/).*\\.(rs|s)$",
-      "command": "cd ${workspaceFolder} && cargo -q xtask corpus --corpus ${workspaceFolder}/../asm-corpus --style columns,compact,align --labels before",
+      "command": "cd ${workspaceFolder} && cargo -q xtask corpus --style columns,compact,align --labels before",
       "runIn": "backend",
       "runningStatusMessage": "Running corpus sync...",
       "finishStatusMessage": "Done."

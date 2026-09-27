@@ -9,6 +9,8 @@ use object::{Object, ObjectSection, ObjectSymbol, SymbolKind};
 use regex::Regex;
 use serde::Deserialize;
 
+use crate::corpus_gen;
+
 const REGIONS: [&str; 3] = ["us", "eu", "jp"];
 const ARM9_FEATURES: [(&str, &str); 3] = [("us", "na"), ("eu", "eu"), ("jp", "jp")];
 const LOCK_FILE: &str = "asm-corpus.lock";
@@ -18,7 +20,8 @@ const BLOCK_END: &str = "ASM_END)*/";
 const COMMAND_PREFIX: &str = "/*(asm-corpus-filename";
 const STUB_PREFIX: &str = "/*(stub";
 const OBJDUMP: &str = "arm-none-eabi-objdump";
-const SKIP_DIRS: [&str; 3] = ["target", "xtask", ".git"];
+const SKIP_DIRS: [&str; 4] = ["target", "xtask", ".git", "asm-corpus"];
+const DEFAULT_CORPUS: &str = "asm-corpus";
 
 const LIST_STYLE_MAX_LINES: usize = 25;
 
@@ -40,7 +43,8 @@ const LOAD_OPS: [&str; 13] = [
 const STORE_OPS: [&str; 12] = ["str", "strb", "strh", "strd", "stm", "stmia", "stmib", "stmda", "stmdb", "stmfd", "push", "swp"];
 const OTHER_OPS: [&str; 8] = ["msr", "mrs", "mcr", "mrc", "svc", "swi", "udf", "nop"];
 
-const USAGE: &str = "usage: cargo xtask corpus [run|stub|strip|sync|status|lock] [--corpus <asm-corpus dir>] [--encodings] \
+const USAGE: &str = "usage: cargo xtask corpus [run|stub|strip|sync|status|lock|generate|verify] [--corpus <asm-corpus dir>] \
+                     [--decomp <pmd-sky clone with all three regions built>] [--no-sync] [--encodings] \
                      [--style <auto|list|columns>[,compact][,align][,label_last|label_first]] [--labels hide|before|after]";
 
 static COMMAND: LazyLock<Regex> = LazyLock::new(|| {
@@ -229,11 +233,15 @@ enum Op {
 pub fn main(args: &[String]) -> Result<()> {
     let mut sub = None;
     let mut corpus = None;
+    let mut decomp = None;
+    let mut no_sync = false;
     let mut render = Render { encodings: false, style: Style::Auto, compact: false, align: false, label_first: false, labels: Labels::Hide };
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--corpus" => corpus = Some(PathBuf::from(it.next().context("--corpus needs a path")?)),
+            "--decomp" => decomp = Some(PathBuf::from(it.next().context("--decomp needs a path")?)),
+            "--no-sync" => no_sync = true,
             "--encodings" => render.encodings = true,
             "--style" => {
                 let spec = it.next().context("--style needs a value")?;
@@ -286,16 +294,49 @@ pub fn main(args: &[String]) -> Result<()> {
     let run_lock = fs::File::create(rsdec.join(RUN_LOCK))?;
     run_lock.lock()?;
 
-    let corpus = || corpus.clone().with_context(|| format!("--corpus is required\n{USAGE}"));
+    let corpus = corpus.unwrap_or_else(|| rsdec.join(DEFAULT_CORPUS));
+    let decomp = || decomp.clone().with_context(|| format!("--decomp <pmd-sky clone with all three regions built> is required\n{USAGE}"));
     match sub.as_deref().unwrap_or("run") {
         "strip" => strip_all(&rsdec),
-        "lock" => make_lock(&rsdec, &corpus()?),
-        "run" => pipeline(&rsdec, &corpus()?, Mode::Run, render),
-        "sync" => pipeline(&rsdec, &corpus()?, Mode::Sync, render),
-        "status" => pipeline(&rsdec, &corpus()?, Mode::Status, render),
-        "stub" => pipeline(&rsdec, &corpus()?, Mode::Stub, render),
+        "lock" => make_lock(&rsdec, &corpus),
+        "run" => pipeline(&rsdec, &corpus, Mode::Run, render),
+        "sync" => pipeline(&rsdec, &corpus, Mode::Sync, render),
+        "status" => pipeline(&rsdec, &corpus, Mode::Status, render),
+        "stub" => pipeline(&rsdec, &corpus, Mode::Stub, render),
+        "generate" => generate(&rsdec, &decomp()?, &corpus, no_sync, render),
+        "verify" => corpus_gen::verify(&decomp()?, &corpus),
         s => bail!("unknown subcommand '{s}'\n{USAGE}"),
     }
+}
+
+fn generate(rsdec: &Path, decomp: &Path, corpus: &Path, no_sync: bool, render: Render) -> Result<()> {
+    let name = corpus.file_name().context("--corpus has no final path component")?.to_string_lossy();
+    let staging = corpus.with_file_name(format!("{name}.new"));
+    let is_generated = |dir: &Path| -> Result<bool> {
+        Ok(!dir.exists() || dir.join(corpus_gen::MARKER_FILE).exists() || fs::read_dir(dir)?.next().is_none())
+    };
+    for dir in [&staging, corpus] {
+        ensure!(
+            is_generated(dir)?,
+            "refusing to replace {}: it is not empty and has no {} marker (not a generated corpus)",
+            dir.display(),
+            corpus_gen::MARKER_FILE
+        );
+    }
+    if staging.exists() {
+        fs::remove_dir_all(&staging)?;
+    }
+    let written = corpus_gen::generate(decomp, &staging)?;
+    if corpus.exists() {
+        fs::remove_dir_all(corpus)?;
+    }
+    fs::rename(&staging, corpus)?;
+    println!("wrote {written} function files to {}", corpus.display());
+    if no_sync {
+        return Ok(());
+    }
+    make_lock(rsdec, corpus)?;
+    pipeline(rsdec, corpus, Mode::Sync, render)
 }
 
 fn walk(dir: &Path, skip: &[&str], out: &mut Vec<PathBuf>) -> Result<()> {

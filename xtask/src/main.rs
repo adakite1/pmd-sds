@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use object::{Endianness, Object, ObjectSegment, elf::{FileHeader32, PT_LOAD}, read::elf::{FileHeader, ProgramHeader}};
 
 mod corpus;
+mod corpus_gen;
 
 /// Turns an ELF binary to a flat memory image, along with the base and ELF entrypoint addresses.
 fn flatten(path: &Path, skip_bss: bool) -> Result<(u32, u32, Vec<u8>)> {
