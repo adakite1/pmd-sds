@@ -13,6 +13,8 @@ const _: () = assert!(
 
 use core::arch::{asm, global_asm, naked_asm};
 
+use utils::prelude::*;
+
 use c_snow_sdk::{HardwareInterrupt, SnowMain, linker_addr, cp15_size_encoding, set_cp15_region};
 
 global_asm!(include_str!("secure_area.s"));
@@ -934,8 +936,11 @@ const EXCEPTION_VEC_TABLE: usize = 0xffff0000;
 pub extern "C" fn _start() -> ! {
     let mut reg_base = linker_addr(&raw const __reg_base);
     unsafe { asm!("", inout("ip") reg_base); /* prevent llvm constant-folding */ }
+    comment!("Turn off IME");
     ime_off(reg_base);
+    comment!("Wait until scanline 0 (VCOUNT = 0)");
     wait_scanline_0(reg_base);
+    comment!("Initialize MPU");
     unsafe {
         asm!(
             "bl {}",
@@ -944,12 +949,15 @@ pub extern "C" fn _start() -> ! {
             options(nostack),
         );
     }
+    comment!("Initialize banked stacks for Supervisor, IRQ, and System modes");
     init_banked_stacks();
+    comment!("Clear DTCM");
     fill_volatile(
         0u32, /* btw, since stacks are all inside dtcm this clears that stack, though since nothing pushes onto the stack yet that is fine (same as original) (but ensure crt0 doesn't accidentally push or use the stack) */
         linker_addr(&raw const __dtcm_base) as *mut u32,
         linker_addr(&raw const __dtcm_clear_size) as usize,
     );
+    comment!("Clear palette RAM and initialize OAM");
     fill_volatile(
         0u32,
         linker_addr(&raw const __palette_ram_base) as *mut u32,
@@ -960,9 +968,11 @@ pub extern "C" fn _start() -> ! {
         linker_addr(&raw const __oam_base) as *mut u32,
         linker_addr(&raw const __oam_fill_size) as usize,
     );
+    comment!("Decompress the program image (doesn't need to decompress anything here for this game)");
     let build_info = unsafe { &*(linker_addr(&raw const __build_info) as *const BuildInfo) };
     let &BuildInfo { compressed_code_ptr, .. } = build_info;
     uncompress_backward(compressed_code_ptr);
+    comment!("Copy autoload sections and clear their BSS");
     unsafe {
         asm!(
             "bl {}",
@@ -980,8 +990,10 @@ pub extern "C" fn _start() -> ! {
             options(nostack),
         );
     }
+    comment!("Clear the main module BSS");
     clear_module_bss();
     
+    comment!("Store 0 to 0x027FFF9C");
     unsafe {
         const DEBUG_RELATED_ADDR: u32 = 0x027fff9c;
         asm!(
@@ -993,6 +1005,7 @@ pub extern "C" fn _start() -> ! {
         );
     }
 
+    comment!("Install the interrupt handler");
     unsafe {
         core::intrinsics::volatile_store(
             linker_addr(&raw const __irq_handler_pointer) as *mut u32,
@@ -1000,10 +1013,12 @@ pub extern "C" fn _start() -> ! {
         ); /* set irq handler */
     }
 
+    comment!("Run static initializers");
     _call_static_initializers();
 
     let main: *const u32;
 
+    comment!("Prepare the call to `SnowMain`");
     unsafe {
         asm!(
             "ldr r1, ={main}",
@@ -1015,8 +1030,10 @@ pub extern "C" fn _start() -> ! {
         );
     }
 
+    comment!("Align sp to AAPCS 8-byte alignment");
     align_sp_0_mod_8();
 
+    comment!("Jump to game code");
     unsafe {
         asm!(
             "bx r1",

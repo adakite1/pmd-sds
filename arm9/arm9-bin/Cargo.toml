@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+utils = { path = "../../shared/utils" }
 c-snow = { path = "../../shared/c-snow-sdk" }
 
 [features]
