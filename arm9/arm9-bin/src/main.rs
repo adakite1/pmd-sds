@@ -907,6 +907,7 @@ unsafe extern "C" {
     static __init_array_end: u8;
 }
 
+/*(asm-corpus-filename: arm9/main/_call_static_initializers, objdump-symbol-name: arm9_bin/_call_static_initializers)DONE('crt0', us, eu, jp)*/
 #[unsafe(link_section = ".text.crt0")]
 #[unsafe(no_mangle)]
 #[unsafe(naked)]
@@ -931,6 +932,8 @@ pub extern "C" fn _call_static_initializers() {
 
 const EXCEPTION_VEC_TABLE: usize = 0xffff0000;
 
+/*(asm-corpus-filename: [sub_02000B98, OSi_ReferSymbol, _fp_init], objdump-symbol-name: none)DONE('crt0')*/
+/*(asm-corpus-filename: arm9/main/_start, objdump-symbol-name: arm9_bin/_start)DONE('crt0', us, eu, jp)*/
 #[unsafe(link_section = ".text.origaddr.02000800")]
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
