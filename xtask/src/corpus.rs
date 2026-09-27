@@ -16,6 +16,7 @@ const RUN_LOCK: &str = "target/xtask-corpus.lock";
 const BLOCK_START: &str = "/*(ASM_START";
 const BLOCK_END: &str = "ASM_END)*/";
 const COMMAND_PREFIX: &str = "/*(asm-corpus-filename";
+const STUB_PREFIX: &str = "/*(stub";
 const OBJDUMP: &str = "arm-none-eabi-objdump";
 const SKIP_DIRS: [&str; 3] = ["target", "xtask", ".git"];
 
@@ -39,7 +40,7 @@ const LOAD_OPS: [&str; 13] = [
 const STORE_OPS: [&str; 12] = ["str", "strb", "strh", "strd", "stm", "stmia", "stmib", "stmda", "stmdb", "stmfd", "push", "swp"];
 const OTHER_OPS: [&str; 8] = ["msr", "mrs", "mcr", "mrc", "svc", "swi", "udf", "nop"];
 
-const USAGE: &str = "usage: cargo xtask corpus [run|strip|sync|status|lock] [--corpus <asm-corpus dir>] [--encodings] \
+const USAGE: &str = "usage: cargo xtask corpus [run|stub|strip|sync|status|lock] [--corpus <asm-corpus dir>] [--encodings] \
                      [--style <auto|list|columns>[,compact][,align][,label_last|label_first]] [--labels hide|before|after]";
 
 static COMMAND: LazyLock<Regex> = LazyLock::new(|| {
@@ -50,6 +51,8 @@ static COMMAND: LazyLock<Regex> = LazyLock::new(|| {
     .unwrap()
 });
 
+static STUB: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"/\*\(stub\s+text:\s*([^)\s]+)\s*\)\*/").unwrap());
+static LINK_SECTION: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"link_section\s*=\s*"([^"]+)""#).unwrap());
 static INSN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(\s*[0-9a-f]+:)\t([0-9a-f ]+)\t(.*)$").unwrap());
 static LABEL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[0-9a-f]+ <[^>]+>:$").unwrap());
 static WORD_LOAD: LazyLock<Regex> = LazyLock::new(|| {
@@ -100,6 +103,7 @@ struct Record {
 
 #[derive(Deserialize)]
 struct RegionEntry {
+    addr: Option<String>,
     listing: Option<Vec<String>>,
     same_as: Option<String>,
 }
@@ -212,6 +216,7 @@ struct Render {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
     Run,
+    Stub,
     Sync,
     Status,
 }
@@ -288,6 +293,7 @@ pub fn main(args: &[String]) -> Result<()> {
         "run" => pipeline(&rsdec, &corpus()?, Mode::Run, render),
         "sync" => pipeline(&rsdec, &corpus()?, Mode::Sync, render),
         "status" => pipeline(&rsdec, &corpus()?, Mode::Status, render),
+        "stub" => pipeline(&rsdec, &corpus()?, Mode::Stub, render),
         s => bail!("unknown subcommand '{s}'\n{USAGE}"),
     }
 }
@@ -479,11 +485,22 @@ fn parse_commands(rel: &str, text: &str, errors: &mut Vec<String>) -> Vec<RawCom
     out
 }
 
-fn load_sources(rsdec: &Path, errors: &mut Vec<String>) -> Result<Vec<Source>> {
+fn load_sources(rsdec: &Path, errors: &mut Vec<String>, mut stubs: Option<&mut Stubs>) -> Result<Vec<Source>> {
+    let files: Vec<(PathBuf, String, String)> = source_files(rsdec)?
+        .into_iter()
+        .map(|path| {
+            let rel = rel_str(rsdec, &path);
+            let text = fs::read_to_string(&path).with_context(|| format!("reading {rel}"))?;
+            Ok((path, rel, text))
+        })
+        .collect::<Result<_>>()?;
+    if let Some(st) = stubs.as_deref_mut() {
+        for (_, _, text) in &files {
+            st.seen.extend(LINK_SECTION.captures_iter(text).map(|c| c[1].to_string()));
+        }
+    }
     let mut out = Vec::new();
-    for path in source_files(rsdec)? {
-        let rel = rel_str(rsdec, &path);
-        let original = fs::read_to_string(&path).with_context(|| format!("reading {rel}"))?;
+    for (path, rel, original) in files {
         let stripped = match strip_blocks(&original) {
             Ok(s) => s,
             Err(line) => {
@@ -491,10 +508,136 @@ fn load_sources(rsdec: &Path, errors: &mut Vec<String>) -> Result<Vec<Source>> {
                 continue;
             }
         };
+        let stripped = match stubs.as_deref_mut() {
+            Some(st) => st.expand(&rel, &stripped, errors)?,
+            None => stripped,
+        };
         let commands = parse_commands(&rel, &stripped, errors);
         out.push(Source { path, rel, original, stripped, commands });
     }
     Ok(out)
+}
+
+struct Stubs<'a> {
+    lock: &'a [LockEntry],
+    corpus: &'a Corpus,
+    seen: HashSet<String>,
+    written: usize,
+    modules: HashMap<String, Vec<BTreeMap<String, u64>>>,
+}
+
+fn region_addrs(rec: &Record) -> BTreeMap<String, u64> {
+    rec.regions
+        .iter()
+        .filter_map(|(r, e)| Some((r.clone(), u64::from_str_radix(e.addr.as_deref()?.trim_start_matches("0x"), 16).ok()?)))
+        .collect()
+}
+
+impl Stubs<'_> {
+    fn expand(&mut self, rel: &str, text: &str, errors: &mut Vec<String>) -> Result<String> {
+        let mut out = String::new();
+        let mut last = 0;
+        let mut starts = HashSet::new();
+        for c in STUB.captures_iter(text) {
+            let m = c.get(0).unwrap();
+            starts.insert(m.start());
+            let line = line_of(text, m.start());
+            let indent: String =
+                text.lines().nth(line).unwrap_or("").chars().take_while(|c| c.is_whitespace()).collect();
+            match self.stub(&c[1], &indent)? {
+                Ok(code) => {
+                    out.push_str(&text[last..m.start()]);
+                    out.push_str(&code);
+                    last = m.end();
+                    self.written += 1;
+                }
+                Err(e) => errors.push(format!("{rel}:{}: {e}", line + 1)),
+            }
+        }
+        for (i, _) in text.match_indices(STUB_PREFIX) {
+            if !starts.contains(&i) {
+                errors.push(format!("{rel}:{}: malformed stub comment", line_of(text, i) + 1));
+            }
+        }
+        out.push_str(&text[last..]);
+        Ok(out)
+    }
+
+    fn module(&mut self, dir: &str) -> Result<&[BTreeMap<String, u64>]> {
+        if !self.modules.contains_key(dir) {
+            let mut all = Vec::new();
+            for e in self.lock.iter().filter(|e| e.dir() == dir) {
+                let path = self.corpus.root.join(self.corpus.preferred_copy(&e.path));
+                let rec: Record =
+                    serde_json::from_slice(&fs::read(&path)?).with_context(|| format!("parsing {}", path.display()))?;
+                all.push(region_addrs(&rec));
+            }
+            self.modules.insert(dir.to_string(), all);
+        }
+        Ok(&self.modules[dir])
+    }
+
+    fn anchor(&mut self, dir: &str, region: &str, addr: u64) -> Result<Option<u64>> {
+        Ok(self
+            .module(dir)?
+            .iter()
+            .filter_map(|m| Some((*m.get(region)?, *m.get("us")?)))
+            .filter(|(ra, _)| *ra < addr)
+            .max_by_key(|(ra, _)| *ra)
+            .map(|(_, us)| us))
+    }
+
+    fn stub(&mut self, query: &str, indent: &str) -> Result<Result<String, String>> {
+        let u = match resolve_unit(self.lock, query) {
+            Ok(u) => u,
+            Err(e) => return Ok(Err(e)),
+        };
+        let e = &self.lock[u];
+        let prefix = match e.dir() {
+            "arm9/main" | "arm7/static" => ".text.origaddr.",
+            "arm9/itcm" => ".text.itcm.origaddr.",
+            "arm7/wram" => ".text.wram.origaddr.",
+            "arm7/main" => ".text.main.origaddr.",
+            other => return Ok(Err(format!("stubs for {other} are not supported yet"))),
+        };
+        let path = self.corpus.root.join(self.corpus.preferred_copy(&e.path));
+        let rec: Record = serde_json::from_slice(&fs::read(&path)?).with_context(|| format!("parsing {}", path.display()))?;
+        let addr_in = |r: &str| {
+            rec.regions.get(r).and_then(|x| x.addr.as_deref()).and_then(|a| u64::from_str_radix(a.trim_start_matches("0x"), 16).ok())
+        };
+        let placed = addr_in("us").or_else(|| addr_in("eu")).or_else(|| addr_in("jp")).unwrap_or(0);
+        if e.dir() == "arm9/main" && placed < 0x0200_0800 {
+            return Ok(Err(format!(
+                "{} is in the secure area (0x02000000..0x02000800), which is defined by secure_area.s",
+                e.name
+            )));
+        }
+        let token = match addr_in("us") {
+            Some(a) => format!("{a:08X}"),
+            None => {
+                let Some((r, a)) = ["eu", "jp"].into_iter().find_map(|r| addr_in(r).map(|a| (r, a))) else {
+                    return Ok(Err(format!("{} has no address in any region", e.path)));
+                };
+                let (dir, name) = (e.dir().to_string(), e.name.clone());
+                let Some(us) = self.anchor(&dir, r, a)? else {
+                    return Ok(Err(format!("{name} has no preceding function in {r} that also exists in us to anchor to")));
+                };
+                if dir == "arm9/main" && us < 0x0200_0800 {
+                    return Ok(Err(format!("{name}'s anchor 0x{us:08X} is in the secure area")));
+                }
+                format!("{us:08X}{r}.{a:08X}")
+            }
+        };
+        let section = format!("{prefix}{token}");
+        if !self.seen.insert(section.clone()) {
+            return Ok(Err(format!("link_section \"{section}\" already exists in the codebase")));
+        }
+        Ok(Ok(format!(
+            "#[inline(never)]\n{indent}#[unsafe(link_section = \"{section}\")]\n{indent}#[unsafe(no_mangle)]\n\
+             {indent}pub extern \"C\" fn {}() {{\n{indent}    \n{indent}}}",
+            e.name
+        )))
+    }
 }
 
 fn resolve_unit(lock: &[LockEntry], query: &str) -> Result<usize, String> {
@@ -686,7 +829,12 @@ fn disassemble(elf: &Path, sym: &str, labels: Labels) -> Result<Vec<String>> {
     let symbol = file
         .symbols()
         .find(|s| s.is_definition() && s.name() == Ok(sym))
-        .with_context(|| format!("symbol '{sym}' not found in {}", elf.display()))?;
+        .with_context(|| {
+            format!(
+                "symbol '{sym}' not found in {} (a function nothing calls yet is removed by --gc-sections)",
+                elf.display()
+            )
+        })?;
     ensure!(symbol.size() > 0, "symbol '{sym}' has size 0 in {}", elf.display());
     let start = symbol.address() & !1;
     let end = start + symbol.size();
@@ -1179,7 +1327,31 @@ fn pipeline(rsdec: &Path, corpus_root: &Path, mode: Mode, render: Render) -> Res
     }
 
     let mut errors = Vec::new();
-    let sources = load_sources(rsdec, &mut errors)?;
+    let mut stubs = matches!(mode, Mode::Run | Mode::Stub).then(|| Stubs { lock: &lock, corpus: &corpus, seen: HashSet::new(), written: 0, modules: HashMap::new() });
+    if mode == Mode::Stub {
+        let stubs = stubs.as_mut().unwrap();
+        let files = source_files(rsdec)?;
+        let texts: Vec<String> = files.iter().map(fs::read_to_string).collect::<std::io::Result<_>>()?;
+        for t in &texts {
+            stubs.seen.extend(LINK_SECTION.captures_iter(t).map(|c| c[1].to_string()));
+        }
+        let mut expanded = Vec::new();
+        for (path, text) in files.iter().zip(&texts) {
+            expanded.push(stubs.expand(&rel_str(rsdec, path), text, &mut errors)?);
+        }
+        if !errors.is_empty() {
+            bail!("{}", errors.join("\n"));
+        }
+        for ((path, text), new) in files.iter().zip(&texts).zip(&expanded) {
+            if new != text {
+                write_if_unchanged(path, &rel_str(rsdec, path), text, new)?;
+            }
+        }
+        println!("stubs written: {}", stubs.written);
+        return Ok(());
+    }
+    let sources = load_sources(rsdec, &mut errors, stubs.as_mut())?;
+    let stubs_written = stubs.as_ref().map_or(0, |s| s.written);
 
     let mut raw_cmds = Vec::new();
     for (si, s) in sources.iter().enumerate() {
@@ -1367,7 +1539,7 @@ fn pipeline(rsdec: &Path, corpus_root: &Path, mode: Mode, render: Render) -> Res
 
     let complete = cmds.iter().filter(|c| matches!(c.state, State::Complete(_))).count();
     println!(
-        "commands: {} ({complete} complete), blocks: {block_count}, files rewritten: {rewritten}, corpus moves: {moved}, duplicates removed: {removed}",
+        "commands: {} ({complete} complete), stubs: {stubs_written}, blocks: {block_count}, files rewritten: {rewritten}, corpus moves: {moved}, duplicates removed: {removed}",
         cmds.len()
     );
     Ok(())
