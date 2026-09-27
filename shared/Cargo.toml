@@ -2,7 +2,7 @@ cargo-features = ["panic-immediate-abort"]
 
 [workspace]
 resolver = "3"
-members = ["c-snow-sdk", "dsemm"]
+members = ["c-snow-sdk", "dsemm", "utils"]
 default-members = []
 
 [profile.release]

@@ -3,6 +3,8 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use object::{Endianness, Object, ObjectSegment, elf::{FileHeader32, PT_LOAD}, read::elf::{FileHeader, ProgramHeader}};
 
+mod corpus;
+
 /// Turns an ELF binary to a flat memory image, along with the base and ELF entrypoint addresses.
 fn flatten(path: &Path, skip_bss: bool) -> Result<(u32, u32, Vec<u8>)> {
     let data = std::fs::read(path)?;
@@ -63,6 +65,12 @@ fn flatten2(path: &Path, skip_bss: bool, use_paddr: bool) -> Result<(u32, u32, V
     Ok((base as u32, header.e_entry(endian), out))
 }
 
-fn main() {
-    println!("Hello, world!");
+fn main() -> Result<()> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match args.first().map(String::as_str) {
+        Some("corpus") => corpus::main(&args[1..]),
+        _ => {
+            Ok(())
+        }
+    }
 }

@@ -1,0 +1,1155 @@
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::sync::LazyLock;
+
+use anyhow::{Context, Result, bail, ensure};
+use object::{Object, ObjectSection, ObjectSymbol, SymbolKind};
+use regex::Regex;
+use serde::Deserialize;
+
+const REGIONS: [&str; 3] = ["us", "eu", "jp"];
+const ARM9_FEATURES: [(&str, &str); 3] = [("us", "na"), ("eu", "eu"), ("jp", "jp")];
+const LOCK_FILE: &str = "asm-corpus.lock";
+const RUN_LOCK: &str = "target/xtask-corpus.lock";
+const BLOCK_START: &str = "/*(ASM_START";
+const BLOCK_END: &str = "ASM_END)*/";
+const COMMAND_PREFIX: &str = "/*(asm-corpus-filename";
+const OBJDUMP: &str = "arm-none-eabi-objdump";
+const SKIP_DIRS: [&str; 3] = ["target", "xtask", ".git"];
+
+const LIST_STYLE_MAX_LINES: usize = 25;
+
+const USAGE: &str = "usage: cargo xtask corpus [run|strip|sync|status|lock] [--corpus <asm-corpus dir>] [--encodings] [--style <auto|list|columns>[,compact]]";
+
+static COMMAND: LazyLock<Regex> = LazyLock::new(|| {
+    let list = r"(\[[^\]]*\]|[^,\s\)\]]+)";
+    Regex::new(&format!(
+        r"/\*\(asm-corpus-filename:\s*{list}\s*,\s*objdump-symbol-name:\s*{list}\s*\)(DONE\(\s*'([^']*)'\s*((?:,\s*[A-Za-z]+\s*)*)\))?\*/"
+    ))
+    .unwrap()
+});
+
+static INSN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(\s*[0-9a-f]+:)\t([0-9a-f ]+)\t(.*)$").unwrap());
+static LABEL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[0-9a-f]+ <[^>]+>:$").unwrap());
+static WORD_LOAD: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\tldr(?:eq|ne|cs|hs|cc|lo|mi|pl|vs|vc|hi|ls|ge|lt|gt|le|al)?\t[a-z0-9]+, \[pc, #-?\d+\]\t@ \(?([0-9a-f]+)")
+        .unwrap()
+});
+static WORD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\.word\t0x([0-9a-f]{8})$").unwrap());
+static POOL_REF: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[pc, #-?\d+\].*@ \(?([0-9a-f]+)").unwrap());
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
+enum Cpu {
+    Arm7,
+    Arm9,
+}
+
+impl Cpu {
+    const ALL: [Cpu; 2] = [Cpu::Arm7, Cpu::Arm9];
+
+    fn dir(self) -> &'static str {
+        match self {
+            Cpu::Arm7 => "arm7",
+            Cpu::Arm9 => "arm9",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Cpu::Arm7 => "arm7_bin",
+            Cpu::Arm9 => "arm9_bin",
+        }
+    }
+
+    fn feature(self, region: &str) -> Option<&'static str> {
+        match self {
+            Cpu::Arm7 => None,
+            Cpu::Arm9 => ARM9_FEATURES.iter().find(|(r, _)| *r == region).map(|(_, f)| *f),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct Record {
+    source: String,
+    #[serde(default)]
+    notes: Vec<String>,
+    regions: BTreeMap<String, RegionEntry>,
+}
+
+#[derive(Deserialize)]
+struct RegionEntry {
+    listing: Option<Vec<String>>,
+    same_as: Option<String>,
+}
+
+impl Record {
+    fn columns(&self) -> impl Iterator<Item = &'static str> + '_ {
+        REGIONS
+            .into_iter()
+            .filter(|r| self.regions.get(*r).is_some_and(|e| e.listing.is_some()))
+    }
+}
+
+#[derive(Deserialize)]
+struct Ident {
+    name: String,
+    #[serde(default)]
+    aliases: Vec<String>,
+}
+
+struct LockEntry {
+    path: String,
+    name: String,
+    aliases: Vec<String>,
+}
+
+impl LockEntry {
+    fn dir(&self) -> &str {
+        self.path.rsplit_once('/').map_or("", |(d, _)| d)
+    }
+
+    fn stem(&self) -> &str {
+        let file = self.path.rsplit_once('/').map_or(self.path.as_str(), |(_, f)| f);
+        file.strip_suffix(".json").unwrap_or(file)
+    }
+
+    fn addr(&self) -> &str {
+        let stem = self.stem();
+        stem.split_once('_').map_or(stem, |(a, _)| a)
+    }
+}
+
+struct Corpus {
+    root: PathBuf,
+    copies: BTreeMap<String, Vec<String>>,
+}
+
+impl Corpus {
+    fn preferred_copy<'a>(&'a self, canon: &'a str) -> &'a str {
+        let copies = &self.copies[canon];
+        if copies.iter().any(|c| c == canon) { canon } else { &copies[0] }
+    }
+}
+
+struct Source {
+    path: PathBuf,
+    rel: String,
+    original: String,
+    stripped: String,
+    commands: Vec<RawCommand>,
+}
+
+struct RawCommand {
+    line: usize,
+    indent: String,
+    units: Vec<String>,
+    syms: Vec<String>,
+    done: Option<(String, BTreeSet<String>)>,
+}
+
+struct Cmd {
+    source: usize,
+    line: usize,
+    indent: String,
+    units: Vec<usize>,
+    syms: Vec<String>,
+    done: Option<(String, BTreeSet<String>)>,
+    state: State,
+}
+
+#[derive(Clone)]
+enum State {
+    Complete(String),
+    Stage(&'static str),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Style {
+    Auto,
+    List,
+    Columns,
+}
+
+#[derive(Clone, Copy)]
+struct Render {
+    encodings: bool,
+    style: Style,
+    compact: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    Run,
+    Sync,
+    Status,
+}
+
+enum Op {
+    Move(String, String),
+    Remove(String),
+}
+
+pub fn main(args: &[String]) -> Result<()> {
+    let mut sub = None;
+    let mut corpus = None;
+    let mut render = Render { encodings: false, style: Style::Auto, compact: false };
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--corpus" => corpus = Some(PathBuf::from(it.next().context("--corpus needs a path")?)),
+            "--encodings" => render.encodings = true,
+            "--style" => {
+                let spec = it.next().context("--style needs a value")?;
+                let mut layout = None;
+                for token in spec.split(',').map(str::trim) {
+                    let l = match token {
+                        "auto" => Style::Auto,
+                        "list" => Style::List,
+                        "columns" => Style::Columns,
+                        "compact" => {
+                            render.compact = true;
+                            continue;
+                        }
+                        other => bail!("unknown --style token '{other}' (expected auto, list, columns, compact)\n{USAGE}"),
+                    };
+                    ensure!(layout.replace(l).is_none(), "--style takes at most one of auto, list, columns");
+                }
+                render.style = layout.unwrap_or(Style::Auto);
+            }
+            s if !s.starts_with('-') && sub.is_none() => sub = Some(s.to_string()),
+            s => bail!("unexpected argument '{s}'\n{USAGE}"),
+        }
+    }
+
+    let rsdec = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf();
+    fs::create_dir_all(rsdec.join("target"))?;
+    let run_lock = fs::File::create(rsdec.join(RUN_LOCK))?;
+    run_lock.lock()?;
+
+    let corpus = || corpus.clone().with_context(|| format!("--corpus is required\n{USAGE}"));
+    match sub.as_deref().unwrap_or("run") {
+        "strip" => strip_all(&rsdec),
+        "lock" => make_lock(&rsdec, &corpus()?),
+        "run" => pipeline(&rsdec, &corpus()?, Mode::Run, render),
+        "sync" => pipeline(&rsdec, &corpus()?, Mode::Sync, render),
+        "status" => pipeline(&rsdec, &corpus()?, Mode::Status, render),
+        s => bail!("unknown subcommand '{s}'\n{USAGE}"),
+    }
+}
+
+fn walk(dir: &Path, skip: &[&str], out: &mut Vec<PathBuf>) -> Result<()> {
+    for entry in fs::read_dir(dir).with_context(|| format!("reading {}", dir.display()))? {
+        let entry = entry?;
+        let path = entry.path();
+        if entry.file_type()?.is_dir() {
+            if !skip.iter().any(|s| entry.file_name() == *s) {
+                walk(&path, skip, out)?;
+            }
+        } else {
+            out.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn rel_str(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap()
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn canonical(rel: &str) -> Option<String> {
+    let p: Vec<&str> = rel.split('/').collect();
+    match p.len() {
+        3 => Some(rel.to_string()),
+        5 if p[2] == "DONE" => Some(format!("{}/{}/{}", p[0], p[1], p[4])),
+        _ => None,
+    }
+}
+
+fn done_path(canon: &str, group: &str) -> String {
+    let (dir, file) = canon.rsplit_once('/').unwrap();
+    format!("{dir}/DONE/{group}/{file}")
+}
+
+fn walk_corpus(root: &Path) -> Result<Corpus> {
+    let mut files = Vec::new();
+    for family in ["arm7", "arm9"] {
+        walk(&root.join(family), &[], &mut files)?;
+    }
+    let mut copies: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for path in files {
+        if path.extension().is_none_or(|e| e != "json") {
+            continue;
+        }
+        let rel = rel_str(root, &path);
+        let canon = canonical(&rel).with_context(|| format!("unexpected corpus file location {rel}"))?;
+        copies.entry(canon).or_default().push(rel);
+    }
+    Ok(Corpus { root: root.to_path_buf(), copies })
+}
+
+fn make_lock(rsdec: &Path, corpus_root: &Path) -> Result<()> {
+    let corpus = walk_corpus(corpus_root)?;
+    let mut lines = Vec::new();
+    for canon in corpus.copies.keys() {
+        let path = corpus.root.join(corpus.preferred_copy(canon));
+        let ident: Ident = serde_json::from_slice(&fs::read(&path)?).with_context(|| format!("parsing {}", path.display()))?;
+        lines.push(format!("{canon}\t{}\t{}", ident.name, ident.aliases.join(",")));
+    }
+    fs::write(rsdec.join(LOCK_FILE), lines.join("\n") + "\n")?;
+    println!("wrote {} entries to {LOCK_FILE}", lines.len());
+    Ok(())
+}
+
+fn read_lock(rsdec: &Path) -> Result<Vec<LockEntry>> {
+    let text = fs::read_to_string(rsdec.join(LOCK_FILE))
+        .with_context(|| format!("reading {LOCK_FILE}; generate it with `cargo xtask corpus lock --corpus <dir>`"))?;
+    text.lines()
+        .filter(|l| !l.is_empty())
+        .map(|l| {
+            let mut f = l.split('\t');
+            let (Some(path), Some(name), Some(aliases)) = (f.next(), f.next(), f.next()) else {
+                bail!("malformed {LOCK_FILE} line: {l}");
+            };
+            Ok(LockEntry {
+                path: path.to_string(),
+                name: name.to_string(),
+                aliases: aliases.split(',').filter(|a| !a.is_empty()).map(String::from).collect(),
+            })
+        })
+        .collect()
+}
+
+fn strip_blocks(text: &str) -> Result<String, usize> {
+    let mut out = Vec::new();
+    let mut open = None;
+    for (i, line) in text.lines().enumerate() {
+        if open.is_none() && line.trim_start().starts_with(BLOCK_START) {
+            open = Some(i);
+        }
+        if open.is_some() {
+            if line.trim_end().ends_with(BLOCK_END) {
+                open = None;
+            }
+            continue;
+        }
+        out.push(line);
+    }
+    if let Some(i) = open {
+        return Err(i);
+    }
+    let mut s = out.join("\n");
+    if text.ends_with('\n') && !out.is_empty() {
+        s.push('\n');
+    }
+    Ok(s)
+}
+
+fn insert_blocks(text: &str, blocks: &BTreeMap<usize, Vec<String>>) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    for (i, line) in text.lines().enumerate() {
+        out.push(line);
+        if let Some(b) = blocks.get(&i) {
+            out.extend(b.iter().map(String::as_str));
+        }
+    }
+    let mut s = out.join("\n");
+    if text.ends_with('\n') && !out.is_empty() {
+        s.push('\n');
+    }
+    s
+}
+
+fn line_of(text: &str, byte: usize) -> usize {
+    text[..byte].matches('\n').count()
+}
+
+fn parse_list(s: &str) -> Vec<String> {
+    let items: Vec<&str> = match s.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+        Some(inner) => inner.split(',').map(str::trim).collect(),
+        None => vec![s.trim()],
+    };
+    items.into_iter().filter(|i| !i.is_empty() && *i != "none").map(String::from).collect()
+}
+
+fn parse_commands(rel: &str, text: &str, errors: &mut Vec<String>) -> Vec<RawCommand> {
+    let mut starts = HashSet::new();
+    let mut out = Vec::new();
+    for c in COMMAND.captures_iter(text) {
+        let m = c.get(0).unwrap();
+        starts.insert(m.start());
+        let start_line = line_of(text, m.start());
+        let indent: String = text
+            .lines()
+            .nth(start_line)
+            .unwrap_or("")
+            .chars()
+            .take_while(|c| c.is_whitespace())
+            .collect();
+        let done = match c.get(3) {
+            None => None,
+            Some(_) => {
+                let group = c[4].trim().to_string();
+                if group.is_empty() || group == "." || group == ".." || group.contains(['/', '\\']) {
+                    errors.push(format!("{rel}:{}: invalid DONE group name '{group}'", start_line + 1));
+                }
+                let mut regions = BTreeSet::new();
+                for r in c[5].split(',').map(str::trim).filter(|r| !r.is_empty()) {
+                    if REGIONS.contains(&r) {
+                        regions.insert(r.to_string());
+                    } else {
+                        errors.push(format!("{rel}:{}: unknown region '{r}' (expected us, eu, jp)", start_line + 1));
+                    }
+                }
+                Some((group, regions))
+            }
+        };
+        out.push(RawCommand {
+            line: line_of(text, m.end() - 1),
+            indent,
+            units: parse_list(&c[1]),
+            syms: parse_list(&c[2]),
+            done,
+        });
+    }
+    for (i, _) in text.match_indices(COMMAND_PREFIX) {
+        if !starts.contains(&i) {
+            errors.push(format!("{rel}:{}: malformed command comment", line_of(text, i) + 1));
+        }
+    }
+    out
+}
+
+fn load_sources(rsdec: &Path, errors: &mut Vec<String>) -> Result<Vec<Source>> {
+    let mut out = Vec::new();
+    for path in source_files(rsdec)? {
+        let rel = rel_str(rsdec, &path);
+        let original = fs::read_to_string(&path).with_context(|| format!("reading {rel}"))?;
+        let stripped = match strip_blocks(&original) {
+            Ok(s) => s,
+            Err(line) => {
+                errors.push(format!("{rel}:{}: {BLOCK_START} without {BLOCK_END}", line + 1));
+                continue;
+            }
+        };
+        let commands = parse_commands(&rel, &stripped, errors);
+        out.push(Source { path, rel, original, stripped, commands });
+    }
+    Ok(out)
+}
+
+fn resolve_unit(lock: &[LockEntry], query: &str) -> Result<usize, String> {
+    let q = query.strip_suffix(".json").unwrap_or(query);
+    let (qual, key) = q.rsplit_once('/').unwrap_or(("", q));
+    let hits: Vec<usize> = lock
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| {
+            (qual.is_empty() || e.dir() == qual || e.dir().starts_with(&format!("{qual}/")))
+                && (e.stem() == key || e.name == key || e.aliases.iter().any(|a| a == key) || e.addr().eq_ignore_ascii_case(key))
+        })
+        .map(|(i, _)| i)
+        .collect();
+    match hits.as_slice() {
+        [i] => Ok(*i),
+        [] => Err(format!("no asm-corpus entry matches '{query}'")),
+        _ => {
+            let by_name: Vec<String> = hits.iter().map(|&i| format!("{}/{}", lock[i].dir(), lock[i].name)).collect();
+            let unique = by_name.iter().collect::<HashSet<_>>().len() == by_name.len();
+            let names: Vec<String> = if unique {
+                by_name
+            } else {
+                hits.iter().map(|&i| format!("{}/{}", lock[i].dir(), lock[i].stem())).collect()
+            };
+            Err(format!("asm-corpus name '{query}' is ambiguous; qualify as one of: {}", names.join(", ")))
+        }
+    }
+}
+
+fn state_of(records: &[&Record], done: &Option<(String, BTreeSet<String>)>) -> State {
+    let columns: BTreeSet<&'static str> = records.iter().flat_map(|r| r.columns()).collect();
+    let done_regions = done.as_ref().map(|(_, s)| s);
+    if let Some((group, regions)) = done
+        && (columns.len() <= 1 || columns.iter().all(|c| regions.contains(*c)))
+    {
+        return State::Complete(group.clone());
+    }
+    let stage = REGIONS
+        .into_iter()
+        .find(|r| columns.contains(r) && !done_regions.is_some_and(|s| s.contains(*r)))
+        .unwrap_or("us");
+    State::Stage(stage)
+}
+
+struct Builds {
+    rsdec: PathBuf,
+    elves: HashMap<(Cpu, Option<&'static str>), PathBuf>,
+    tables: HashMap<Cpu, HashSet<String>>,
+}
+
+impl Builds {
+    fn elf(&mut self, cpu: Cpu, region: &str) -> Result<PathBuf> {
+        let feature = cpu.feature(region);
+        if let Some(p) = self.elves.get(&(cpu, feature)) {
+            return Ok(p.clone());
+        }
+        let mut cmd = Command::new("cargo");
+        cmd.current_dir(self.rsdec.join(cpu.dir()))
+            .args(["build", "--release", "--message-format=json-render-diagnostics"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit());
+        if let Some(f) = feature
+            && f != cpu.feature("us").unwrap()
+        {
+            cmd.args(["--no-default-features", "--features", f, "--target-dir", &format!("target/xtask-{f}")]);
+        }
+        let out = cmd.output().with_context(|| format!("running cargo build for {}", cpu.label()))?;
+        ensure!(out.status.success(), "cargo build failed for {} ({})", cpu.label(), feature.unwrap_or("default"));
+        let mut elf = None;
+        for line in String::from_utf8_lossy(&out.stdout).lines() {
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+            if v["reason"] == "compiler-artifact"
+                && let Some(exe) = v["executable"].as_str()
+            {
+                elf = Some(PathBuf::from(exe));
+            }
+        }
+        let elf = elf.with_context(|| format!("cargo build for {} produced no executable", cpu.label()))?;
+        self.elves.insert((cpu, feature), elf.clone());
+        Ok(elf)
+    }
+
+    fn table(&mut self, cpu: Cpu) -> Result<&HashSet<String>> {
+        if !self.tables.contains_key(&cpu) {
+            let elf = self.elf(cpu, "us")?;
+            let data = fs::read(&elf)?;
+            let file = object::File::parse(&*data)?;
+            let names = file
+                .symbols()
+                .filter(|s| s.is_definition())
+                .filter_map(|s| s.name().ok().map(String::from))
+                .collect();
+            self.tables.insert(cpu, names);
+        }
+        Ok(&self.tables[&cpu])
+    }
+
+    fn resolve_sym(&mut self, query: &str) -> Result<Result<(Cpu, String), String>> {
+        for cpu in Cpu::ALL {
+            for prefix in [format!("{}/", cpu.label()), format!("{}/", cpu.label().replace('_', "-"))] {
+                if let Some(rest) = query.strip_prefix(&prefix) {
+                    return Ok(Ok((cpu, rest.to_string())));
+                }
+            }
+        }
+        let mut found = Vec::new();
+        for cpu in Cpu::ALL {
+            if self.table(cpu)?.contains(query) {
+                found.push(cpu);
+            }
+        }
+        Ok(match found.as_slice() {
+            [cpu] => Ok((*cpu, query.to_string())),
+            [] => Err(format!("symbol '{query}' not found in arm7_bin or arm9_bin")),
+            _ => Err(format!("symbol '{query}' is in both binaries; qualify as arm7_bin/{query} or arm9_bin/{query}")),
+        })
+    }
+}
+
+fn objdump_range(elf: &Path, start: u64, stop: u64) -> Result<Vec<String>> {
+    let out = Command::new(OBJDUMP)
+        .arg("-d")
+        .arg(format!("--start-address={start:#x}"))
+        .arg(format!("--stop-address={stop:#x}"))
+        .arg(elf)
+        .output()
+        .with_context(|| format!("running {OBJDUMP}"))?;
+    ensure!(out.status.success(), "{OBJDUMP} failed: {}", String::from_utf8_lossy(&out.stderr));
+    Ok(String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|l| LABEL.is_match(l) || INSN.is_match(l))
+        .map(String::from)
+        .collect())
+}
+
+fn disassemble(elf: &Path, sym: &str) -> Result<Vec<String>> {
+    let data = fs::read(elf)?;
+    let file = object::File::parse(&*data)?;
+    let symbol = file
+        .symbols()
+        .find(|s| s.is_definition() && s.name() == Ok(sym))
+        .with_context(|| format!("symbol '{sym}' not found in {}", elf.display()))?;
+    ensure!(symbol.size() > 0, "symbol '{sym}' has size 0 in {}", elf.display());
+    let start = symbol.address() & !1;
+    let end = start + symbol.size();
+    let mut lines = objdump_range(elf, start, end)?;
+    let targets: BTreeSet<u64> = lines
+        .iter()
+        .filter_map(|l| POOL_REF.captures(l))
+        .filter_map(|c| u64::from_str_radix(&c[1], 16).ok())
+        .filter(|t| *t < start || *t >= end)
+        .collect();
+    let mut runs: Vec<(u64, u64)> = Vec::new();
+    for t in targets {
+        match runs.last_mut() {
+            Some((_, stop)) if *stop >= t => *stop = (*stop).max(t + 4),
+            _ => runs.push((t, t + 4)),
+        }
+    }
+    for (lo, hi) in runs {
+        if lo != end {
+            lines.push("...".to_string());
+        }
+        lines.extend(objdump_range(elf, lo, hi)?.into_iter().filter(|l| INSN.is_match(l)));
+    }
+
+    let mut names: HashMap<u64, BTreeSet<String>> = HashMap::new();
+    for s in file.symbols() {
+        if s.is_undefined() || matches!(s.kind(), SymbolKind::Section | SymbolKind::File) {
+            continue;
+        }
+        if let Ok(n) = s.name()
+            && !n.is_empty()
+            && !n.starts_with('$')
+            && !n.starts_with(".L")
+        {
+            names.entry(s.address()).or_default().insert(n.to_string());
+        }
+    }
+    let read_word = |addr: u64| -> Option<u32> {
+        if addr % 4 != 0 {
+            return None;
+        }
+        file.sections().find_map(|sec| {
+            let (base, size) = (sec.address(), sec.size());
+            if base == 0 || addr < base || addr + 4 > base + size {
+                return None;
+            }
+            let data = sec.data().ok()?;
+            let off = (addr - base) as usize;
+            data.get(off..off + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+        })
+    };
+    Ok(annotate_loads(lines, |addr| {
+        let value = read_word(addr)?;
+        Some(match names.get(&u64::from(value)) {
+            Some(n) => format!("{value:#010x} <{}>", n.iter().cloned().collect::<Vec<_>>().join(", ")),
+            None => format!("{value:#010x}"),
+        })
+    }))
+}
+
+fn annotate_loads(lines: Vec<String>, resolve: impl Fn(u64) -> Option<String>) -> Vec<String> {
+    lines
+        .into_iter()
+        .map(|line| {
+            let resolved = WORD_LOAD
+                .captures(&line)
+                .and_then(|c| u64::from_str_radix(&c[1], 16).ok())
+                .and_then(&resolve);
+            match resolved {
+                Some(r) => format!("{line}\t=> {r}"),
+                None => line,
+            }
+        })
+        .collect()
+}
+
+fn annotate_corpus_listing(lines: &[String]) -> Vec<String> {
+    let words: HashMap<u64, u32> = lines
+        .iter()
+        .filter_map(|l| INSN.captures(l))
+        .filter_map(|c| {
+            let addr = u64::from_str_radix(c[1].trim().trim_end_matches(':'), 16).ok()?;
+            let value = u32::from_str_radix(&WORD.captures(&c[3])?[1], 16).ok()?;
+            Some((addr, value))
+        })
+        .collect();
+    annotate_loads(lines.to_vec(), |addr| words.get(&addr).map(|v| format!("{v:#010x}")))
+}
+
+fn expand_tabs(s: &str) -> String {
+    let mut out = String::new();
+    let mut col = 0;
+    for ch in s.chars() {
+        if ch == '\t' {
+            let n = 8 - col % 8;
+            out.extend(std::iter::repeat_n(' ', n));
+            col += n;
+        } else {
+            out.push(ch);
+            col += 1;
+        }
+    }
+    out
+}
+
+fn defuse(line: &str) -> String {
+    line.replace("/*", "/ *").replace("*/", "* /")
+}
+
+fn normalize(line: &str, encodings: bool) -> String {
+    let line = match INSN.captures(line) {
+        Some(c) if !encodings => format!("{}\t{}", &c[1], &c[3]),
+        _ => line.to_string(),
+    };
+    defuse(&expand_tabs(&line))
+}
+
+struct Insn<'a> {
+    addr: &'a str,
+    enc: &'a str,
+    mnem: &'a str,
+    ops: Option<&'a str>,
+    comment: Option<&'a str>,
+    resolved: Option<&'a str>,
+}
+
+fn parse_insn(line: &str) -> Option<Insn<'_>> {
+    let c = INSN.captures(line)?;
+    let mut fields = c.get(3)?.as_str().split('\t');
+    let mut insn = Insn {
+        addr: c.get(1)?.as_str().trim(),
+        enc: c.get(2)?.as_str().trim(),
+        mnem: fields.next()?,
+        ops: None,
+        comment: None,
+        resolved: None,
+    };
+    for f in fields {
+        if f.starts_with("@ ") {
+            insn.comment = Some(f);
+        } else if f.starts_with("=> ") {
+            insn.resolved = Some(f);
+        } else if insn.ops.is_none() && insn.comment.is_none() {
+            insn.ops = Some(f);
+        } else {
+            return None;
+        }
+    }
+    Some(insn)
+}
+
+fn fold_resolved(resolved: &str, pad: usize, max_width: usize) -> Vec<String> {
+    let Some((head, names)) = resolved.split_once(" <").and_then(|(h, n)| Some((h, n.strip_suffix('>')?))) else {
+        return vec![format!("{}{resolved}", " ".repeat(pad))];
+    };
+    let first = format!("{}{head} <", " ".repeat(pad));
+    let cont = " ".repeat(first.len());
+    let mut out = Vec::new();
+    let mut cur = first;
+    let mut fresh = true;
+    let names: Vec<&str> = names.split(", ").collect();
+    for (i, name) in names.iter().enumerate() {
+        let tail = if i + 1 == names.len() { ">" } else { "," };
+        let piece = format!("{}{name}{tail}", if fresh { "" } else { " " });
+        if !fresh && cur.len() + piece.len() > max_width {
+            out.push(cur);
+            cur = format!("{cont}{name}{tail}");
+        } else {
+            cur.push_str(&piece);
+        }
+        fresh = false;
+    }
+    out.push(cur);
+    out
+}
+
+fn compact_lines(sides: [&[String]; 2], encodings: bool) -> [Vec<String>; 2] {
+    let insns: Vec<Insn> = sides.iter().flat_map(|s| s.iter()).filter_map(|l| parse_insn(l)).collect();
+    let aw = insns.iter().map(|i| i.addr.len()).max().unwrap_or(0);
+    let ew = if encodings { insns.iter().map(|i| i.enc.len()).max().unwrap_or(0) + 1 } else { 0 };
+    let mw = insns.iter().map(|i| i.mnem.len()).max().unwrap_or(0);
+    let opcol = aw + 1 + ew + mw + 1;
+    let inline_comment = |c: &str| !c.contains('<');
+    let first_line = |i: &Insn| {
+        let enc = if encodings { format!("{:<w$}", i.enc, w = ew) } else { String::new() };
+        let mut l = format!("{:>aw$} {enc}{:<mw$} {}", i.addr, i.mnem, i.ops.unwrap_or(""));
+        if let Some(c) = i.comment.filter(|c| inline_comment(c)) {
+            l.push_str("  ");
+            l.push_str(c);
+        }
+        l.trim_end().to_string()
+    };
+    let max_width = insns.iter().map(|i| first_line(i).len()).max().unwrap_or(0).max(opcol + 24);
+    sides.map(|side| {
+        let mut out = Vec::new();
+        for line in side {
+            let Some(i) = parse_insn(line) else {
+                out.push(defuse(&expand_tabs(line)));
+                continue;
+            };
+            out.push(defuse(&first_line(&i)));
+            if let Some(c) = i.comment.filter(|c| !inline_comment(c)) {
+                out.push(defuse(&format!("{}{c}", " ".repeat(opcol + 1))));
+            }
+            if let Some(r) = i.resolved {
+                out.extend(fold_resolved(r, opcol, max_width).iter().map(|l| defuse(l)));
+            }
+        }
+        out
+    })
+}
+
+fn render_block(indent: &str, stage: &str, left: &[String], right: &[String], render: Render) -> Vec<String> {
+    let ltitle = format!("asm-corpus {stage}");
+    let rtitle = format!("rsdec {stage}");
+    let list = match render.style {
+        Style::List => true,
+        Style::Columns => false,
+        Style::Auto => left.len() <= LIST_STYLE_MAX_LINES && right.len() <= LIST_STYLE_MAX_LINES,
+    };
+    let [left, right] = if render.compact {
+        compact_lines([left, right], render.encodings)
+    } else {
+        [left, right].map(|s| s.iter().map(|l| normalize(l, render.encodings)).collect())
+    };
+    let (left, right) = (left.as_slice(), right.as_slice());
+    if list {
+        let mut out = vec![format!("{indent}{BLOCK_START} {stage}")];
+        for (title, lines) in [(&ltitle, left), (&rtitle, right)] {
+            out.push(format!("{indent}{title}"));
+            out.push(format!("{indent}{}", "-".repeat(title.len())));
+            out.extend(lines.iter().map(|l| format!("{indent}{l}").trim_end().to_string()));
+        }
+        out.push(format!("{indent}{BLOCK_END}"));
+        return out;
+    }
+    let width = |v: &[String], t: &str| v.iter().map(|l| l.chars().count()).chain([t.len()]).max().unwrap_or(0);
+    let lw = width(left, &ltitle);
+    let rw = width(right, &rtitle);
+    let row = |l: &str, r: &str| format!("{indent}{l:<lw$} | {r}").trim_end().to_string();
+    let mut out = vec![format!("{indent}{BLOCK_START} {stage}"), row(&ltitle, &rtitle)];
+    out.push(format!("{indent}{}-+-{}", "-".repeat(lw), "-".repeat(rw)));
+    for i in 0..left.len().max(right.len()) {
+        out.push(row(left.get(i).map_or("", String::as_str), right.get(i).map_or("", String::as_str)));
+    }
+    out.push(format!("{indent}{BLOCK_END}"));
+    out
+}
+
+fn pipeline(rsdec: &Path, corpus_root: &Path, mode: Mode, render: Render) -> Result<()> {
+    let lock = read_lock(rsdec)?;
+    let corpus = walk_corpus(corpus_root)?;
+    let lock_paths: BTreeSet<&str> = lock.iter().map(|e| e.path.as_str()).collect();
+    let corpus_paths: BTreeSet<&str> = corpus.copies.keys().map(String::as_str).collect();
+    if lock_paths != corpus_paths {
+        let missing: Vec<&&str> = lock_paths.difference(&corpus_paths).take(5).collect();
+        let extra: Vec<&&str> = corpus_paths.difference(&lock_paths).take(5).collect();
+        bail!(
+            "{LOCK_FILE} does not match the corpus (missing from corpus: {missing:?}, not in lock: {extra:?}); \
+             regenerate it with `cargo xtask corpus lock --corpus <dir>`"
+        );
+    }
+
+    let mut errors = Vec::new();
+    let sources = load_sources(rsdec, &mut errors)?;
+
+    let mut raw_cmds = Vec::new();
+    for (si, s) in sources.iter().enumerate() {
+        for c in &s.commands {
+            let mut units = Vec::new();
+            for q in &c.units {
+                match resolve_unit(&lock, q) {
+                    Ok(i) => units.push(i),
+                    Err(e) => errors.push(format!("{}:{}: {e}", s.rel, c.line + 1)),
+                }
+            }
+            raw_cmds.push((si, c, units));
+        }
+    }
+    if !errors.is_empty() {
+        bail!("{}", errors.join("\n"));
+    }
+
+    let mut records: HashMap<usize, Record> = HashMap::new();
+    for (_, _, units) in &raw_cmds {
+        for &u in units {
+            if let std::collections::hash_map::Entry::Vacant(v) = records.entry(u) {
+                let path = corpus.root.join(corpus.preferred_copy(&lock[u].path));
+                let rec: Record =
+                    serde_json::from_slice(&fs::read(&path)?).with_context(|| format!("parsing {}", path.display()))?;
+                v.insert(rec);
+            }
+        }
+    }
+
+    let cmds: Vec<Cmd> = raw_cmds
+        .into_iter()
+        .map(|(si, c, units)| {
+            let recs: Vec<&Record> = units.iter().map(|u| &records[u]).collect();
+            let state = state_of(&recs, &c.done);
+            Cmd {
+                source: si,
+                line: c.line,
+                indent: c.indent.clone(),
+                units,
+                syms: c.syms.clone(),
+                done: c.done.clone(),
+                state,
+            }
+        })
+        .collect();
+
+    let mut target: BTreeMap<&str, &str> = BTreeMap::new();
+    for c in &cmds {
+        if let State::Complete(group) = &c.state {
+            for &u in &c.units {
+                let path = lock[u].path.as_str();
+                if let Some(prev) = target.insert(path, group)
+                    && prev != group
+                {
+                    errors.push(format!(
+                        "{}:{}: {path} is DONE in both '{prev}' and '{group}'",
+                        sources[c.source].rel,
+                        c.line + 1
+                    ));
+                }
+            }
+        }
+    }
+    if !errors.is_empty() {
+        bail!("{}", errors.join("\n"));
+    }
+
+    if mode == Mode::Status {
+        print_status(&lock, &sources, &cmds, &target);
+        return Ok(());
+    }
+
+    let mut new_texts: Vec<String> = sources.iter().map(|s| s.original.clone()).collect();
+    let mut block_count = 0;
+    if mode == Mode::Run {
+        let mut builds = Builds { rsdec: rsdec.to_path_buf(), elves: HashMap::new(), tables: HashMap::new() };
+        let mut blocks: Vec<BTreeMap<usize, Vec<String>>> = vec![BTreeMap::new(); sources.len()];
+        for c in &cmds {
+            let State::Stage(stage) = c.state else { continue };
+            if c.units.is_empty() && c.syms.is_empty() {
+                continue;
+            }
+            let at = format!("{}:{}", sources[c.source].rel, c.line + 1);
+            let mut left = Vec::new();
+            for &u in &c.units {
+                let e = &lock[u];
+                let rec = &records[&u];
+                left.push(format!("== {}", e.path.trim_end_matches(".json")));
+                left.push(format!("   {}", rec.source));
+                left.extend(rec.notes.iter().map(|n| format!("!! {n}")));
+                let listing = |r: &str| rec.regions.get(r).and_then(|x| x.listing.as_ref());
+                match rec.regions.get(stage) {
+                    Some(RegionEntry { listing: Some(l), .. }) => {
+                        left.extend(annotate_corpus_listing(l))
+                    }
+                    Some(RegionEntry { same_as: Some(b), .. }) => {
+                        left.push(format!("-- {stage} bytes identical to {b}"));
+                        let l = listing(b).map(|l| annotate_corpus_listing(l)).unwrap_or_default();
+                        left.extend(l);
+                    }
+                    _ => left.push(format!("-- absent in {stage}")),
+                }
+            }
+            let mut right = Vec::new();
+            for q in &c.syms {
+                let (cpu, sym) = match builds.resolve_sym(q)? {
+                    Ok(x) => x,
+                    Err(e) => {
+                        errors.push(format!("{at}: {e}"));
+                        continue;
+                    }
+                };
+                let elf = builds.elf(cpu, stage)?;
+                right.push(format!("== {}/{sym} ({})", cpu.label(), cpu.feature(stage).unwrap_or("default")));
+                match disassemble(&elf, &sym) {
+                    Ok(lines) => right.extend(lines),
+                    Err(e) => errors.push(format!("{at}: {e}")),
+                }
+            }
+            blocks[c.source].entry(c.line).or_default().extend(render_block(&c.indent, stage, &left, &right, render));
+            block_count += 1;
+        }
+        if !errors.is_empty() {
+            bail!("{}", errors.join("\n"));
+        }
+        for (i, s) in sources.iter().enumerate() {
+            new_texts[i] = insert_blocks(&s.stripped, &blocks[i]);
+        }
+    }
+
+    let mut ops = Vec::new();
+    for (canon, copies) in &corpus.copies {
+        let want = target.get(canon.as_str()).map_or(canon.clone(), |g| done_path(canon, g));
+        if copies.len() == 1 && copies[0] == want {
+            continue;
+        }
+        let src = if copies.contains(canon) {
+            canon.clone()
+        } else {
+            let first = fs::read(corpus.root.join(&copies[0]))?;
+            for other in &copies[1..] {
+                if fs::read(corpus.root.join(other))? != first {
+                    errors.push(format!("conflicting copies of {canon}: {}", copies.join(", ")));
+                }
+            }
+            copies[0].clone()
+        };
+        if src != want {
+            ops.push(Op::Move(src.clone(), want.clone()));
+        }
+        for c in copies {
+            if *c != src && *c != want {
+                ops.push(Op::Remove(c.clone()));
+            }
+        }
+    }
+    if !errors.is_empty() {
+        bail!("{}", errors.join("\n"));
+    }
+
+    let mut rewritten = 0;
+    for (s, new) in sources.iter().zip(&new_texts) {
+        if *new != s.original && write_if_unchanged(&s.path, &s.rel, &s.original, new)? {
+            rewritten += 1;
+        }
+    }
+
+    let (mut moved, mut removed) = (0, 0);
+    for op in &ops {
+        match op {
+            Op::Move(from, to) => {
+                let to = corpus.root.join(to);
+                fs::create_dir_all(to.parent().unwrap())?;
+                fs::rename(corpus.root.join(from), &to)?;
+                moved += 1;
+            }
+            Op::Remove(path) => {
+                fs::remove_file(corpus.root.join(path))?;
+                removed += 1;
+            }
+        }
+    }
+    prune_done_dirs(&corpus.root)?;
+
+    let complete = cmds.iter().filter(|c| matches!(c.state, State::Complete(_))).count();
+    println!(
+        "commands: {} ({complete} complete), blocks: {block_count}, files rewritten: {rewritten}, corpus moves: {moved}, duplicates removed: {removed}",
+        cmds.len()
+    );
+    Ok(())
+}
+
+fn prune_done_dirs(root: &Path) -> Result<()> {
+    for family in ["arm7", "arm9"] {
+        for module in fs::read_dir(root.join(family))? {
+            let done = module?.path().join("DONE");
+            if !done.is_dir() {
+                continue;
+            }
+            for group in fs::read_dir(&done)? {
+                let group = group?.path();
+                if group.is_dir() && fs::read_dir(&group)?.next().is_none() {
+                    fs::remove_dir(&group)?;
+                }
+            }
+            if fs::read_dir(&done)?.next().is_none() {
+                fs::remove_dir(&done)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn print_status(lock: &[LockEntry], sources: &[Source], cmds: &[Cmd], target: &BTreeMap<&str, &str>) {
+    let mut modules: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
+    for e in lock {
+        let m = modules.entry(e.dir()).or_default();
+        m.1 += 1;
+        if target.contains_key(e.path.as_str()) {
+            m.0 += 1;
+        }
+    }
+    let done = target.len();
+    println!("done: {done} / {} units ({:.2}%)", lock.len(), 100.0 * done as f64 / lock.len() as f64);
+    for (m, (d, t)) in &modules {
+        if *d > 0 {
+            println!("  {m:<12} {d} / {t}");
+        }
+    }
+    let mut groups: BTreeMap<&str, usize> = BTreeMap::new();
+    for g in target.values() {
+        *groups.entry(g).or_default() += 1;
+    }
+    if !groups.is_empty() {
+        println!("groups:");
+        for (g, n) in &groups {
+            println!("  {g:<12} {n}");
+        }
+    }
+    let pending: Vec<&Cmd> = cmds.iter().filter(|c| matches!(c.state, State::Stage(_))).collect();
+    if !pending.is_empty() {
+        println!("in progress:");
+        for c in pending {
+            let State::Stage(stage) = c.state else { continue };
+            let done = c.done.as_ref().map_or(String::new(), |(g, r)| {
+                format!(" DONE('{g}'{})", r.iter().map(|r| format!(", {r}")).collect::<String>())
+            });
+            let units: Vec<&str> = c.units.iter().map(|&u| lock[u].stem()).collect();
+            println!(
+                "  {}:{}  stage {stage}{done}  [{}]",
+                sources[c.source].rel,
+                c.line + 1,
+                units.join(", ")
+            );
+        }
+    }
+}
+
+fn source_files(rsdec: &Path) -> Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    walk(rsdec, &SKIP_DIRS, &mut files)?;
+    files.retain(|p| p.extension().is_some_and(|e| e == "rs" || e == "s"));
+    files.sort();
+    Ok(files)
+}
+
+fn write_if_unchanged(path: &Path, rel: &str, original: &str, new: &str) -> Result<bool> {
+    if fs::read_to_string(path)? != original {
+        eprintln!("skipped {rel}: changed on disk during this run");
+        return Ok(false);
+    }
+    let tmp = path.with_extension("xtask-tmp");
+    fs::write(&tmp, new)?;
+    fs::rename(&tmp, path)?;
+    Ok(true)
+}
+
+fn strip_all(rsdec: &Path) -> Result<()> {
+    let mut stripped = Vec::new();
+    let mut errors = Vec::new();
+    for path in source_files(rsdec)? {
+        let rel = rel_str(rsdec, &path);
+        let original = fs::read_to_string(&path)?;
+        match strip_blocks(&original) {
+            Ok(s) if s != original => stripped.push((path, rel, original, s)),
+            Ok(_) => {}
+            Err(line) => errors.push(format!("{rel}:{}: {BLOCK_START} without {BLOCK_END}", line + 1)),
+        }
+    }
+    if !errors.is_empty() {
+        bail!("{}", errors.join("\n"));
+    }
+    let mut n = 0;
+    for (path, rel, original, s) in &stripped {
+        if write_if_unchanged(path, rel, original, s)? {
+            n += 1;
+        }
+    }
+    println!("stripped blocks from {n} files");
+    Ok(())
+}

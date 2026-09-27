@@ -258,6 +258,7 @@ pub const DAP_CONFIG: u32 = build_c5_mask_extended([
 ]);
 const _: () = assert!(DAP_CONFIG == 0x15111011);
 
+/*(asm-corpus-filename: init_cp15, objdump-symbol-name: arm9_bin/init_cp15)DONE('crt0')*/
 #[unsafe(link_section = ".text.origaddr.02000AB0")]
 #[unsafe(no_mangle)]
 pub extern "C" fn init_cp15() -> ! {
@@ -531,6 +532,7 @@ fn init_banked_stacks() {
     // Note: No, I will not use naked asm or global asm. This works, nothing spills to stack.
 }
 
+/*(asm-corpus-filename: INITi_CpuClear32, objdump-symbol-name: none)DONE('crt0')*/
 #[inline(always)]
 fn fill_volatile(value: u32, mut dst: *mut u32, mut size: usize) -> *mut u32 {
     debug_assert_eq!(size % core::mem::size_of::<u32>(), 0);
@@ -567,6 +569,7 @@ struct BuildInfo {
     nitrocode_rev: u32,
 }
 
+/*(asm-corpus-filename: MIi_UncompressBackward, objdump-symbol-name: arm9_bin/uncompress_backward)DONE('crt0')*/
 #[unsafe(link_section = ".text.origaddr.02000970")]
 #[unsafe(no_mangle)]
 fn uncompress_backward(ptr: *const u32) {
@@ -812,6 +815,7 @@ struct AutoloadEntry {
     bss_size: u32,
 }
 
+/*(asm-corpus-filename: [arm9/main/do_autoload, arm9/main/_start_AutoloadDoneCallback], objdump-symbol-name: arm9_bin/do_autoload)DONE('crt0')*/
 #[unsafe(link_section = ".text.origaddr.02000A1C")]
 #[unsafe(no_mangle)]
 pub extern "C" fn do_autoload() -> ! {

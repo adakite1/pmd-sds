@@ -186,6 +186,7 @@ struct AutoloadEntry {
     bss_size: u32,
 }
 
+/*(asm-corpus-filename: [arm7/static/do_autoload, arm7/static/_start_AutoloadDoneCallback], objdump-symbol-name: arm7_bin/do_autoload)DONE('crt0')*/
 #[unsafe(link_section = ".text.origaddr.02380118")]
 #[unsafe(no_mangle)]
 pub extern "C" fn do_autoload() -> ! {
@@ -259,6 +260,7 @@ fn clear_module_bss() {
 
 const HW_MTEST_MRAMDTCTDSZ_FLAG: usize = 0x027ffffa; /* *mut u16 */
 
+/*(asm-corpus-filename: sub_0238018C, objdump-symbol-name: arm7_bin/test_memory)DONE('crt0')*/
 #[unsafe(link_section = ".text.origaddr.0238018C")]
 #[unsafe(no_mangle)]
 pub extern "C" fn test_memory() -> ! {
@@ -330,6 +332,7 @@ pub extern "C" fn _call_static_initializers() {
 
 const NOT_EXCEPTION_VEC_TABLE_UNDEF_MEM: usize = 0xffff0000;
 
+/*(asm-corpus-filename: arm7/static/_start, objdump-symbol-name: arm7_bin/_start)DONE('crt0')*/
 #[unsafe(link_section = ".text.origaddr.02380000")]
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {

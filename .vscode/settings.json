@@ -5,5 +5,15 @@
     "./arm9/Cargo.toml",
     "./shared/Cargo.toml"
   ],
-  "rust-analyzer.check.allTargets": false
+  "rust-analyzer.check.allTargets": false,
+  "editor.colorDecorators": false,
+  "runOnSave.commands": [
+    {
+      "match": "^(?!.*/(xtask|target)/).*\\.(rs|s)$",
+      "command": "cd ${workspaceFolder} && cargo -q xtask corpus --corpus ${workspaceFolder}/../asm-corpus --style auto,compact",
+      "runIn": "backend",
+      "runningStatusMessage": "Running corpus sync...",
+      "finishStatusMessage": "Done."
+    }
+  ]
 }

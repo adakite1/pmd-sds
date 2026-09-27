@@ -9,9 +9,6 @@ use core::cell::UnsafeCell;
 
 pub mod os;
 
-#[cfg(any(armv4t, armv5te))]
-mod helpers;
-
 #[cfg(armv4t)]
 #[unsafe(link_section = ".text.wram")]
 #[unsafe(no_mangle)]
