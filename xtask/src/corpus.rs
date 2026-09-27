@@ -22,7 +22,9 @@ const SKIP_DIRS: [&str; 3] = ["target", "xtask", ".git"];
 const LIST_STYLE_MAX_LINES: usize = 25;
 
 const MARK_TAG: &str = "\x01mark\t";
-const ALIGN_MAX_CELLS: usize = 4_000_000;
+const ALIGN_MAX_CELLS: usize = 2_000_000;
+const GAP_OPEN: i32 = 5;
+const GAP_EXTEND: i32 = 0;
 
 const CONDS: [&str; 17] = ["eq", "ne", "cs", "hs", "cc", "lo", "mi", "pl", "vs", "vc", "hi", "ls", "ge", "lt", "gt", "le", "al"];
 const BRANCH_OPS: [&str; 4] = ["b", "bl", "bx", "blx"];
@@ -946,7 +948,7 @@ enum OpClass {
 }
 
 enum Key {
-    Insn { base: String, cond: String, class: OpClass, konst: Option<String> },
+    Insn { base: String, cond: String, class: OpClass, konst: Option<String>, ops: String },
     Word,
     FuncLabel,
     Header,
@@ -997,7 +999,8 @@ fn key_of(line: &str) -> Key {
             _ => false,
         };
         let konst = materializes.then(|| dest.to_string());
-        return Key::Insn { base, cond, class, konst };
+        let ops = if ops.contains("[pc") || ops.contains('<') { String::new() } else { ops.to_string() };
+        return Key::Insn { base, cond, class, konst, ops };
     }
     if LABEL.is_match(line) {
         Key::FuncLabel
@@ -1013,11 +1016,13 @@ fn key_of(line: &str) -> Key {
 fn pair_score(a: &Key, b: &Key) -> Option<u32> {
     match (a, b) {
         (
-            Key::Insn { base: ba, cond: ca, class: ka, konst: xa },
-            Key::Insn { base: bb, cond: cb, class: kb, konst: xb },
+            Key::Insn { base: ba, cond: ca, class: ka, konst: xa, ops: oa },
+            Key::Insn { base: bb, cond: cb, class: kb, konst: xb, ops: ob },
         ) => {
-            if ba == bb && ca == cb {
-                Some(4)
+            if xa.is_some() != xb.is_some() {
+                (ka == kb).then_some(1)
+            } else if ba == bb && ca == cb {
+                Some(if !oa.is_empty() && oa == ob { 5 } else { 4 })
             } else if ba == bb {
                 Some(if *ka == OpClass::Branch { 3 } else { 2 })
             } else if let (Some(da), Some(db)) = (xa, xb) {
@@ -1041,38 +1046,42 @@ fn align_units(left: &[Key], right: &[Key]) -> Option<Vec<(Option<usize>, Option
         return None;
     }
     let w = m + 1;
-    let mut dp = vec![0u32; (n + 1) * w];
-    for i in (0..n).rev() {
-        for j in (0..m).rev() {
-            let diag = pair_score(&left[i], &right[j]).map_or(0, |s| s + dp[(i + 1) * w + j + 1]);
-            dp[i * w + j] = diag.max(dp[(i + 1) * w + j]).max(dp[i * w + j + 1]);
+    let at = |i: usize, j: usize| i * w + j;
+    let mut best = [vec![0i32; (n + 1) * w], vec![0i32; (n + 1) * w], vec![0i32; (n + 1) * w]];
+    let options = |best: &[Vec<i32>; 3], i: usize, j: usize, state: usize| {
+        let pair = (i < n && j < m)
+            .then(|| pair_score(&left[i], &right[j]))
+            .flatten()
+            .map(|p| p as i32 + best[0][at(i + 1, j + 1)]);
+        let del = (i < n).then(|| best[1][at(i + 1, j)] - GAP_EXTEND - if state == 1 { 0 } else { GAP_OPEN });
+        let ins = (j < m).then(|| best[2][at(i, j + 1)] - GAP_EXTEND - if state == 2 { 0 } else { GAP_OPEN });
+        [pair, del, ins]
+    };
+    for i in (0..=n).rev() {
+        for j in (0..=m).rev() {
+            if i == n && j == m {
+                continue;
+            }
+            for state in 0..3 {
+                let v = options(&best, i, j, state).into_iter().flatten().max().unwrap();
+                best[state][at(i, j)] = v;
+            }
         }
     }
     let mut out = Vec::new();
-    let (mut i, mut j) = (0, 0);
+    let (mut i, mut j, mut state) = (0, 0, 0);
     while i < n || j < m {
-        if i < n && j < m {
-            if let Some(s) = pair_score(&left[i], &right[j])
-                && s + dp[(i + 1) * w + j + 1] == dp[i * w + j]
-            {
-                out.push((Some(i), Some(j)));
-                i += 1;
-                j += 1;
-                continue;
-            }
-            if dp[(i + 1) * w + j] == dp[i * w + j] {
-                out.push((Some(i), None));
-                i += 1;
-            } else {
-                out.push((None, Some(j)));
-                j += 1;
-            }
-        } else if i < n {
+        let target = best[state][at(i, j)];
+        let [pair, del, _] = options(&best, i, j, state);
+        if pair == Some(target) {
+            out.push((Some(i), Some(j)));
+            (i, j, state) = (i + 1, j + 1, 0);
+        } else if del == Some(target) {
             out.push((Some(i), None));
-            i += 1;
+            (i, state) = (i + 1, 1);
         } else {
             out.push((None, Some(j)));
-            j += 1;
+            (j, state) = (j + 1, 2);
         }
     }
     Some(out)
@@ -1108,14 +1117,25 @@ fn render_block(indent: &str, stage: &str, left: &[String], right: &[String], re
     let [left, right] = match alignment {
         Some(steps) => {
             let (mut l, mut r) = (Vec::new(), Vec::new());
-            for (a, b) in steps {
-                let la = a.map_or(&[][..], |i| units[0][i].as_slice());
-                let rb = b.map_or(&[][..], |j| units[1][j].as_slice());
+            let mut emit = |la: Vec<String>, rb: Vec<String>| {
                 for k in 0..la.len().max(rb.len()) {
                     l.push(la.get(k).cloned().unwrap_or_default());
                     r.push(rb.get(k).cloned().unwrap_or_default());
                 }
+            };
+            let (mut hunk_l, mut hunk_r) = (Vec::new(), Vec::new());
+            for (a, b) in steps {
+                match (a, b) {
+                    (Some(i), Some(j)) => {
+                        emit(std::mem::take(&mut hunk_l), std::mem::take(&mut hunk_r));
+                        emit(units[0][i].clone(), units[1][j].clone());
+                    }
+                    (Some(i), None) => hunk_l.extend(units[0][i].iter().cloned()),
+                    (None, Some(j)) => hunk_r.extend(units[1][j].iter().cloned()),
+                    (None, None) => {}
+                }
             }
+            emit(hunk_l, hunk_r);
             [l, r]
         }
         None => units.map(|side| side.into_iter().flatten().collect::<Vec<String>>()),
