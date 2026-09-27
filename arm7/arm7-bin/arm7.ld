@@ -196,6 +196,8 @@ SECTIONS {
     .strtab 0 : { *(.strtab) }
     .shstrtab 0 : { *(.shstrtab) }
 
+    .code_labels 0 : { KEEP(*(.code_labels)) }
+
     /DISCARD/ : {
         *(.ARM.extab*)
         *(.eh_frame*)

@@ -889,6 +889,7 @@ dependencies = [
  "ds-rom",
  "object 0.40.0",
  "regex",
+ "rustc-demangle",
  "serde",
  "serde_json",
 ]

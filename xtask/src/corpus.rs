@@ -21,7 +21,10 @@ const SKIP_DIRS: [&str; 3] = ["target", "xtask", ".git"];
 
 const LIST_STYLE_MAX_LINES: usize = 25;
 
-const USAGE: &str = "usage: cargo xtask corpus [run|strip|sync|status|lock] [--corpus <asm-corpus dir>] [--encodings] [--style <auto|list|columns>[,compact]]";
+const MARK_TAG: &str = "\x01mark\t";
+
+const USAGE: &str = "usage: cargo xtask corpus [run|strip|sync|status|lock] [--corpus <asm-corpus dir>] [--encodings] \
+                     [--style <auto|list|columns>[,compact][,label_last|label_first]] [--labels hide|before|after]";
 
 static COMMAND: LazyLock<Regex> = LazyLock::new(|| {
     let list = r"(\[[^\]]*\]|[^,\s\)\]]+)";
@@ -173,11 +176,20 @@ enum Style {
     Columns,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Labels {
+    Hide,
+    Before,
+    After,
+}
+
 #[derive(Clone, Copy)]
 struct Render {
     encodings: bool,
     style: Style,
     compact: bool,
+    label_first: bool,
+    labels: Labels,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -195,7 +207,7 @@ enum Op {
 pub fn main(args: &[String]) -> Result<()> {
     let mut sub = None;
     let mut corpus = None;
-    let mut render = Render { encodings: false, style: Style::Auto, compact: false };
+    let mut render = Render { encodings: false, style: Style::Auto, compact: false, label_first: false, labels: Labels::Hide };
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -204,6 +216,7 @@ pub fn main(args: &[String]) -> Result<()> {
             "--style" => {
                 let spec = it.next().context("--style needs a value")?;
                 let mut layout = None;
+                let mut label_order = None;
                 for token in spec.split(',').map(str::trim) {
                     let l = match token {
                         "auto" => Style::Auto,
@@ -213,11 +226,29 @@ pub fn main(args: &[String]) -> Result<()> {
                             render.compact = true;
                             continue;
                         }
-                        other => bail!("unknown --style token '{other}' (expected auto, list, columns, compact)\n{USAGE}"),
+                        "label_last" | "label_first" => {
+                            ensure!(
+                                label_order.replace(token == "label_first").is_none(),
+                                "--style takes at most one of label_last, label_first"
+                            );
+                            continue;
+                        }
+                        other => bail!(
+                            "unknown --style token '{other}' (expected auto, list, columns, compact, label_last, label_first)\n{USAGE}"
+                        ),
                     };
                     ensure!(layout.replace(l).is_none(), "--style takes at most one of auto, list, columns");
                 }
                 render.style = layout.unwrap_or(Style::Auto);
+                render.label_first = label_order.unwrap_or(false);
+            }
+            "--labels" => {
+                render.labels = match it.next().map(String::as_str) {
+                    Some("hide") => Labels::Hide,
+                    Some("before") => Labels::Before,
+                    Some("after") => Labels::After,
+                    other => bail!("--labels expects hide, before or after, got {other:?}\n{USAGE}"),
+                }
             }
             s if !s.starts_with('-') && sub.is_none() => sub = Some(s.to_string()),
             s => bail!("unexpected argument '{s}'\n{USAGE}"),
@@ -579,7 +610,56 @@ fn objdump_range(elf: &Path, start: u64, stop: u64) -> Result<Vec<String>> {
         .collect())
 }
 
-fn disassemble(elf: &Path, sym: &str) -> Result<Vec<String>> {
+fn code_labels(file: &object::File) -> Vec<(u64, String, String)> {
+    let Some(data) = file.section_by_name(".code_labels").and_then(|s| s.data().ok()) else {
+        return Vec::new();
+    };
+    let cstr = |off: usize| -> Option<(String, usize)> {
+        let len = data.get(off..)?.iter().position(|&b| b == 0)?;
+        Some((String::from_utf8_lossy(&data[off..off + len]).into_owned(), off + len + 1))
+    };
+    let mut out = Vec::new();
+    let mut off = 0;
+    while off + 4 <= data.len() {
+        let addr = u32::from_le_bytes(data[off..off + 4].try_into().unwrap());
+        let Some((id, next)) = cstr(off + 4) else { break };
+        let Some((comment, next)) = cstr(next) else { break };
+        off = (next + 3) & !3;
+        if addr != 0 {
+            out.push((u64::from(addr & !1), id, comment));
+        }
+    }
+    out
+}
+
+fn insert_labels(lines: Vec<String>, labels: &[(u64, String, String)], start: u64, end: u64, mode: Labels) -> Vec<String> {
+    let mut pending: Vec<&(u64, String, String)> =
+        labels.iter().filter(|(a, _, _)| (start..=end).contains(a)).collect();
+    let tag = |(_, id, comment): &(u64, String, String)| format!("{MARK_TAG}{id}\t{comment}");
+    let mut out = Vec::new();
+    for line in lines {
+        let addr = INSN.captures(&line).and_then(|c| u64::from_str_radix(c[1].trim().trim_end_matches(':'), 16).ok());
+        let here: Vec<String> = match addr {
+            Some(a) => {
+                let (hit, rest): (Vec<_>, Vec<_>) = pending.into_iter().partition(|(la, _, _)| *la == a);
+                pending = rest;
+                hit.into_iter().map(tag).collect()
+            }
+            None => Vec::new(),
+        };
+        if mode == Labels::Before {
+            out.extend(here);
+            out.push(line);
+        } else {
+            out.push(line);
+            out.extend(here);
+        }
+    }
+    out.extend(pending.into_iter().map(tag));
+    out
+}
+
+fn disassemble(elf: &Path, sym: &str, labels: Labels) -> Result<Vec<String>> {
     let data = fs::read(elf)?;
     let file = object::File::parse(&*data)?;
     let symbol = file
@@ -620,7 +700,7 @@ fn disassemble(elf: &Path, sym: &str) -> Result<Vec<String>> {
             && !n.starts_with('$')
             && !n.starts_with(".L")
         {
-            names.entry(s.address()).or_default().insert(n.to_string());
+            names.entry(s.address()).or_default().insert(format!("{:#}", rustc_demangle::demangle(n)));
         }
     }
     let read_word = |addr: u64| -> Option<u32> {
@@ -637,13 +717,48 @@ fn disassemble(elf: &Path, sym: &str) -> Result<Vec<String>> {
             data.get(off..off + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()))
         })
     };
-    Ok(annotate_loads(lines, |addr| {
+    let lines = annotate_loads(lines, |addr| {
         let value = read_word(addr)?;
         Some(match names.get(&u64::from(value)) {
             Some(n) => format!("{value:#010x} <{}>", n.iter().cloned().collect::<Vec<_>>().join(", ")),
             None => format!("{value:#010x}"),
         })
-    }))
+    });
+    Ok(match labels {
+        Labels::Hide => lines,
+        mode => insert_labels(lines, &code_labels(&file), start, end, mode),
+    })
+}
+
+fn render_label(line: &str, pad: usize, width: usize, label_first: bool) -> Option<Vec<String>> {
+    let (id, comment) = line.strip_prefix(MARK_TAG)?.split_once('\t')?;
+    let head = if label_first && !id.is_empty() { format!("({id}) \"") } else { "\"".to_string() };
+    let tail = if !label_first && !id.is_empty() { format!("\"  ({id})") } else { "\"".to_string() };
+    let first_col = pad.saturating_sub(2);
+    let avail = width.saturating_sub(first_col + head.len()).max(20);
+    let mut rows: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    for word in comment.split(' ').filter(|w| !w.is_empty()) {
+        if !cur.is_empty() && cur.len() + 1 + word.len() > avail {
+            rows.push(std::mem::take(&mut cur));
+        }
+        if !cur.is_empty() {
+            cur.push(' ');
+        }
+        cur.push_str(word);
+    }
+    rows.push(cur);
+    let last = rows.len() - 1;
+    Some(
+        rows.into_iter()
+            .enumerate()
+            .map(|(i, r)| {
+                let lead = if i == 0 { format!("{}{head}", " ".repeat(first_col)) } else { " ".repeat(pad) };
+                let end = if i == last { tail.as_str() } else { "" };
+                defuse(&format!("{lead}{r}{end}"))
+            })
+            .collect(),
+    )
 }
 
 fn annotate_loads(lines: Vec<String>, resolve: impl Fn(u64) -> Option<String>) -> Vec<String> {
@@ -762,7 +877,7 @@ fn fold_resolved(resolved: &str, pad: usize, max_width: usize) -> Vec<String> {
     out
 }
 
-fn compact_lines(sides: [&[String]; 2], encodings: bool) -> [Vec<String>; 2] {
+fn compact_lines(sides: [&[String]; 2], encodings: bool, label_first: bool) -> [Vec<String>; 2] {
     let insns: Vec<Insn> = sides.iter().flat_map(|s| s.iter()).filter_map(|l| parse_insn(l)).collect();
     let aw = insns.iter().map(|i| i.addr.len()).max().unwrap_or(0);
     let ew = if encodings { insns.iter().map(|i| i.enc.len()).max().unwrap_or(0) + 1 } else { 0 };
@@ -782,13 +897,17 @@ fn compact_lines(sides: [&[String]; 2], encodings: bool) -> [Vec<String>; 2] {
     sides.map(|side| {
         let mut out = Vec::new();
         for line in side {
+            if let Some(rows) = render_label(line, aw + 1, max_width.max(56), label_first) {
+                out.extend(rows);
+                continue;
+            }
             let Some(i) = parse_insn(line) else {
                 out.push(defuse(&expand_tabs(line)));
                 continue;
             };
             out.push(defuse(&first_line(&i)));
             if let Some(c) = i.comment.filter(|c| !inline_comment(c)) {
-                out.push(defuse(&format!("{}{c}", " ".repeat(opcol + 1))));
+                out.push(defuse(&format!("{}{c}", " ".repeat(opcol + 5))));
             }
             if let Some(r) = i.resolved {
                 out.extend(fold_resolved(r, opcol, max_width).iter().map(|l| defuse(l)));
@@ -807,9 +926,21 @@ fn render_block(indent: &str, stage: &str, left: &[String], right: &[String], re
         Style::Auto => left.len() <= LIST_STYLE_MAX_LINES && right.len() <= LIST_STYLE_MAX_LINES,
     };
     let [left, right] = if render.compact {
-        compact_lines([left, right], render.encodings)
+        compact_lines([left, right], render.encodings, render.label_first)
     } else {
-        [left, right].map(|s| s.iter().map(|l| normalize(l, render.encodings)).collect())
+        let width = [left, right]
+            .iter()
+            .flat_map(|s| s.iter())
+            .filter(|l| !l.starts_with(MARK_TAG))
+            .map(|l| normalize(l, render.encodings).len())
+            .max()
+            .unwrap_or(0)
+            .max(56);
+        [left, right].map(|s| {
+            s.iter()
+                .flat_map(|l| render_label(l, 16, width, render.label_first).unwrap_or_else(|| vec![normalize(l, render.encodings)]))
+                .collect()
+        })
     };
     let (left, right) = (left.as_slice(), right.as_slice());
     if list {
@@ -966,7 +1097,7 @@ fn pipeline(rsdec: &Path, corpus_root: &Path, mode: Mode, render: Render) -> Res
                 };
                 let elf = builds.elf(cpu, stage)?;
                 right.push(format!("== {}/{sym} ({})", cpu.label(), cpu.feature(stage).unwrap_or("default")));
-                match disassemble(&elf, &sym) {
+                match disassemble(&elf, &sym, render.labels) {
                     Ok(lines) => right.extend(lines),
                     Err(e) => errors.push(format!("{at}: {e}")),
                 }

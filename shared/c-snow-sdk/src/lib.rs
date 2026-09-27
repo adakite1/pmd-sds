@@ -7,6 +7,8 @@
 
 use core::cell::UnsafeCell;
 
+use utils::prelude::*;
+
 pub mod os;
 
 #[cfg(armv4t)]
