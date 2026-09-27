@@ -13,14 +13,9 @@ const _: () = assert!(
 
 use core::arch::{asm, global_asm, naked_asm};
 
-use c_snow_sdk::{HardwareInterrupt, SnowMain};
+use c_snow_sdk::{HardwareInterrupt, SnowMain, linker_addr, cp15_size_encoding, set_cp15_region};
 
 global_asm!(include_str!("secure_area.s"));
-
-#[inline(always)]
-fn linker_addr(symbol: *const u8) -> u32 {
-    symbol as u32
-}
 
 unsafe extern "C" {
     static __reg_base: u8;
@@ -53,74 +48,6 @@ fn wait_scanline_0(reg_base: u32) {
     } != 0 {
         core::hint::spin_loop();
     }
-}
-
-#[inline(always)]
-pub const fn cp15_size_encoding(size: u32) -> u32 {
-    assert!(size >= 0x1000);
-    assert!(size.is_power_of_two());
-
-    (size.trailing_zeros() - 1) << 1  /* PMSAv5 size encoding */
-}
-
-macro_rules! set_cp15_region {
-    (
-        region = $region:ident,
-        base = $base:expr,
-        size_encoding = $size:expr,
-        enabled = $enabled:expr $(,)?
-    ) => {{
-        const VALUE: u32 = {
-            let base = $base as u32;
-            let size_raw = ($size as u32) & 0x3e;
-
-            let exponent = (size_raw >> 1) + 1;
-            let size_bytes = 1u32 << exponent;
-
-            assert!(
-                (base & 0x00000fff) == 0, /* Base cannot leak into bits [11:0] */
-                "MPU base address must have bits [11:0] cleared (minimum 4KB alignment)"
-            );
-
-            assert!(
-                (base & (size_bytes - 1)) == 0, /* Base must be naturally aligned to region size */
-                "MPU base address is not naturally aligned to the region size"
-            );
-
-            (base & 0xfffff000)
-                | size_raw
-                | (if $enabled { 1 } else { 0 })
-        };
-
-        /* Configure an ARM Memory Protection Unit (MPU) managed memory region on an
-            ARMv4/ARMv5 PMSA core (like the ARM946E-S on Nintendo DS)
-            CRn = c6 contains MPU Region Base and Size Registers
-            
-            The value is:
-            Bits [31:12] (Base Address): The physical starting address of the memory region
-            Bits [11:6] (Reserved): SBZ
-            Bits [5:1] (Size): The region size encoded as an exponent, defined by: Size = 2^(N+1) bytes where N is the 5-bit binary value with no shifting
-            Bit [0] (Enable)
-            
-            This doesn't do much by itself, it just defines the regions. Later, we can start flipping:
-            CRn = c2 (Cacheability), where Bit N sets whether reads and writes in Region N can allocate into the L1 I-Cache or D-Cache,
-            CRn = c3 (Bufferability), where Bit N sets whether writes to Region N can use the hardware write buffer,
-            CRn = c5 (Access Permissions), where each region has 2-bits of permissions representing No Access, Read-Only, and Full-Access for Privileged vs User modes
-            and then finally flipping SCTLR Bit 0 (the M bit) enables all of them.
-            
-            Some more notes:
-            - For any address, if it is present in multiple regions (overlapping regions),
-                the highest-numbered region's configuration wins. So Region 7 wins over Region 0.
-            - If a memory access touches anything unconfigured or permissions are violated,
-                immediate Data Abort or Prefetch Abort exception.
-            - The Cache Controller checks c2 and c3 bits to decide whether an access goes straight
-                to memory or uses the cache and write buffers respectively. */
-        core::arch::asm!(
-            concat!("mcr p15, 0, {value}, c6, ", stringify!($region), ", 0"),
-            value = in(reg) VALUE,
-            options(nostack, preserves_flags)
-        );
-    }};
 }
 
 unsafe extern "C" {

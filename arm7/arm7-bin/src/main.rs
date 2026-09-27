@@ -5,12 +5,7 @@
 
 use core::arch::{asm, naked_asm};
 
-use c_snow_sdk::{HardwareInterrupt, SnowSpMain};
-
-#[inline(always)]
-fn linker_addr(symbol: *const u8) -> u32 {
-    symbol as u32
-}
+use c_snow_sdk::{HardwareInterrupt, SnowSpMain, linker_addr};
 
 unsafe extern "C" {
     static __reg_base: u8;

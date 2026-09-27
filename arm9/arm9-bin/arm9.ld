@@ -16,6 +16,12 @@ SECTIONS {
     __itcm_base = ORIGIN(ITCM);
     __dtcm_base = ORIGIN(DTCM);
 
+    __main_ram_top = ORIGIN(MAIN_RAM) + LENGTH(MAIN_RAM); /* 0x02400000 */
+    __main_ram_top_arm9 = __main_ram_top - 0x20000; /* 0x023E0000 */
+    /* The top 0x20000 bytes of the lower Main RAM mirror consist of 0x4000 bytes of
+        ARM7's private Main RAM (shadowed by DTCM on the upper mirror), 0x1b000 bytes of more of ARM7's private Main RAM, and 0x1000 bytes
+        of System and SDK memory, all of which are not owned by the ARM9 game code. */
+
     /* First 0x800 bytes are the secure area. At this point has "encryObj" marker,
         then packing script encrypts it later, and BIOS decrypts it again at boot. */
     .secure_area 0x02000000 : {
