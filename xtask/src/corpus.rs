@@ -22,9 +22,23 @@ const SKIP_DIRS: [&str; 3] = ["target", "xtask", ".git"];
 const LIST_STYLE_MAX_LINES: usize = 25;
 
 const MARK_TAG: &str = "\x01mark\t";
+const ALIGN_MAX_CELLS: usize = 4_000_000;
+
+const CONDS: [&str; 17] = ["eq", "ne", "cs", "hs", "cc", "lo", "mi", "pl", "vs", "vc", "hi", "ls", "ge", "lt", "gt", "le", "al"];
+const BRANCH_OPS: [&str; 4] = ["b", "bl", "bx", "blx"];
+const COMPARE_OPS: [&str; 4] = ["cmp", "cmn", "tst", "teq"];
+const ALU_OPS: [&str; 26] = [
+    "mov", "mvn", "add", "adc", "sub", "sbc", "rsb", "rsc", "and", "orr", "eor", "bic", "lsl", "lsr", "asr", "ror", "rrx",
+    "mul", "mla", "umull", "umlal", "smull", "smlal", "clz", "qadd", "qsub",
+];
+const LOAD_OPS: [&str; 13] = [
+    "ldr", "ldrb", "ldrh", "ldrsb", "ldrsh", "ldrd", "ldm", "ldmia", "ldmib", "ldmda", "ldmdb", "ldmfd", "pop",
+];
+const STORE_OPS: [&str; 12] = ["str", "strb", "strh", "strd", "stm", "stmia", "stmib", "stmda", "stmdb", "stmfd", "push", "swp"];
+const OTHER_OPS: [&str; 8] = ["msr", "mrs", "mcr", "mrc", "svc", "swi", "udf", "nop"];
 
 const USAGE: &str = "usage: cargo xtask corpus [run|strip|sync|status|lock] [--corpus <asm-corpus dir>] [--encodings] \
-                     [--style <auto|list|columns>[,compact][,label_last|label_first]] [--labels hide|before|after]";
+                     [--style <auto|list|columns>[,compact][,align][,label_last|label_first]] [--labels hide|before|after]";
 
 static COMMAND: LazyLock<Regex> = LazyLock::new(|| {
     let list = r"(\[[^\]]*\]|[^,\s\)\]]+)";
@@ -188,6 +202,7 @@ struct Render {
     encodings: bool,
     style: Style,
     compact: bool,
+    align: bool,
     label_first: bool,
     labels: Labels,
 }
@@ -207,7 +222,7 @@ enum Op {
 pub fn main(args: &[String]) -> Result<()> {
     let mut sub = None;
     let mut corpus = None;
-    let mut render = Render { encodings: false, style: Style::Auto, compact: false, label_first: false, labels: Labels::Hide };
+    let mut render = Render { encodings: false, style: Style::Auto, compact: false, align: false, label_first: false, labels: Labels::Hide };
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -226,6 +241,10 @@ pub fn main(args: &[String]) -> Result<()> {
                             render.compact = true;
                             continue;
                         }
+                        "align" => {
+                            render.align = true;
+                            continue;
+                        }
                         "label_last" | "label_first" => {
                             ensure!(
                                 label_order.replace(token == "label_first").is_none(),
@@ -234,7 +253,7 @@ pub fn main(args: &[String]) -> Result<()> {
                             continue;
                         }
                         other => bail!(
-                            "unknown --style token '{other}' (expected auto, list, columns, compact, label_last, label_first)\n{USAGE}"
+                            "unknown --style token '{other}' (expected auto, list, columns, compact, align, label_last, label_first)\n{USAGE}"
                         ),
                     };
                     ensure!(layout.replace(l).is_none(), "--style takes at most one of auto, list, columns");
@@ -877,7 +896,7 @@ fn fold_resolved(resolved: &str, pad: usize, max_width: usize) -> Vec<String> {
     out
 }
 
-fn compact_lines(sides: [&[String]; 2], encodings: bool, label_first: bool) -> [Vec<String>; 2] {
+fn compact_units(sides: [&[String]; 2], encodings: bool, label_first: bool) -> [Vec<Vec<String>>; 2] {
     let insns: Vec<Insn> = sides.iter().flat_map(|s| s.iter()).filter_map(|l| parse_insn(l)).collect();
     let aw = insns.iter().map(|i| i.addr.len()).max().unwrap_or(0);
     let ew = if encodings { insns.iter().map(|i| i.enc.len()).max().unwrap_or(0) + 1 } else { 0 };
@@ -895,26 +914,168 @@ fn compact_lines(sides: [&[String]; 2], encodings: bool, label_first: bool) -> [
     };
     let max_width = insns.iter().map(|i| first_line(i).len()).max().unwrap_or(0).max(opcol + 24);
     sides.map(|side| {
-        let mut out = Vec::new();
-        for line in side {
-            if let Some(rows) = render_label(line, aw + 1, max_width.max(56), label_first) {
-                out.extend(rows);
-                continue;
-            }
-            let Some(i) = parse_insn(line) else {
-                out.push(defuse(&expand_tabs(line)));
-                continue;
-            };
-            out.push(defuse(&first_line(&i)));
-            if let Some(c) = i.comment.filter(|c| !inline_comment(c)) {
-                out.push(defuse(&format!("{}{c}", " ".repeat(opcol + 5))));
-            }
-            if let Some(r) = i.resolved {
-                out.extend(fold_resolved(r, opcol, max_width).iter().map(|l| defuse(l)));
+        side.iter()
+            .map(|line| {
+                if let Some(rows) = render_label(line, aw + 1, max_width.max(56), label_first) {
+                    return rows;
+                }
+                let Some(i) = parse_insn(line) else {
+                    return vec![defuse(&expand_tabs(line))];
+                };
+                let mut out = vec![defuse(&first_line(&i))];
+                if let Some(c) = i.comment.filter(|c| !inline_comment(c)) {
+                    out.push(defuse(&format!("{}{c}", " ".repeat(opcol + 5))));
+                }
+                if let Some(r) = i.resolved {
+                    out.extend(fold_resolved(r, opcol, max_width).iter().map(|l| defuse(l)));
+                }
+                out
+            })
+            .collect()
+    })
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OpClass {
+    Branch,
+    Load,
+    Store,
+    Alu,
+    Compare,
+    Other,
+}
+
+enum Key {
+    Insn { base: String, cond: String, class: OpClass, konst: Option<String> },
+    Word,
+    FuncLabel,
+    Header,
+    Ellipsis,
+    Unmatched,
+}
+
+fn split_mnemonic(m: &str) -> (String, String, OpClass) {
+    let groups: [(&[&str], OpClass); 6] = [
+        (&BRANCH_OPS, OpClass::Branch),
+        (&LOAD_OPS, OpClass::Load),
+        (&STORE_OPS, OpClass::Store),
+        (&ALU_OPS, OpClass::Alu),
+        (&COMPARE_OPS, OpClass::Compare),
+        (&OTHER_OPS, OpClass::Other),
+    ];
+    let mut best: Option<(&str, &str, OpClass)> = None;
+    for (ops, class) in groups {
+        for op in ops {
+            let Some(rest) = m.strip_prefix(op) else { continue };
+            let rest_cond = rest.strip_prefix('s').filter(|_| class == OpClass::Alu).unwrap_or(rest);
+            let rest_cond = if class == OpClass::Alu { rest_cond.strip_suffix('s').unwrap_or(rest_cond) } else { rest_cond };
+            if (rest_cond.is_empty() || CONDS.contains(&rest_cond)) && best.is_none_or(|(b, _, _)| op.len() > b.len()) {
+                best = Some((op, rest_cond, class));
             }
         }
-        out
-    })
+    }
+    match best {
+        Some((b, c, class)) => (b.to_string(), c.to_string(), class),
+        None => (m.to_string(), String::new(), OpClass::Other),
+    }
+}
+
+fn key_of(line: &str) -> Key {
+    if line.starts_with(MARK_TAG) {
+        return Key::Unmatched;
+    }
+    if let Some(i) = parse_insn(line) {
+        if i.mnem == ".word" {
+            return Key::Word;
+        }
+        let (base, cond, class) = split_mnemonic(i.mnem);
+        let ops = i.ops.unwrap_or("");
+        let (dest, src) = ops.split_once(", ").unwrap_or((ops, ""));
+        let materializes = match base.as_str() {
+            "mov" | "mvn" => src.starts_with('#'),
+            "ldr" => src.starts_with("[pc"),
+            _ => false,
+        };
+        let konst = materializes.then(|| dest.to_string());
+        return Key::Insn { base, cond, class, konst };
+    }
+    if LABEL.is_match(line) {
+        Key::FuncLabel
+    } else if line.starts_with("== ") {
+        Key::Header
+    } else if line == "..." {
+        Key::Ellipsis
+    } else {
+        Key::Unmatched
+    }
+}
+
+fn pair_score(a: &Key, b: &Key) -> Option<u32> {
+    match (a, b) {
+        (
+            Key::Insn { base: ba, cond: ca, class: ka, konst: xa },
+            Key::Insn { base: bb, cond: cb, class: kb, konst: xb },
+        ) => {
+            if ba == bb && ca == cb {
+                Some(4)
+            } else if ba == bb {
+                Some(if *ka == OpClass::Branch { 3 } else { 2 })
+            } else if let (Some(da), Some(db)) = (xa, xb) {
+                Some(if da == db { 3 } else { 2 })
+            } else if ka == kb && *ka != OpClass::Other {
+                Some(1)
+            } else {
+                None
+            }
+        }
+        (Key::Word, Key::Word) => Some(2),
+        (Key::FuncLabel, Key::FuncLabel) | (Key::Header, Key::Header) => Some(6),
+        (Key::Ellipsis, Key::Ellipsis) => Some(1),
+        _ => None,
+    }
+}
+
+fn align_units(left: &[Key], right: &[Key]) -> Option<Vec<(Option<usize>, Option<usize>)>> {
+    let (n, m) = (left.len(), right.len());
+    if (n + 1) * (m + 1) > ALIGN_MAX_CELLS {
+        return None;
+    }
+    let w = m + 1;
+    let mut dp = vec![0u32; (n + 1) * w];
+    for i in (0..n).rev() {
+        for j in (0..m).rev() {
+            let diag = pair_score(&left[i], &right[j]).map_or(0, |s| s + dp[(i + 1) * w + j + 1]);
+            dp[i * w + j] = diag.max(dp[(i + 1) * w + j]).max(dp[i * w + j + 1]);
+        }
+    }
+    let mut out = Vec::new();
+    let (mut i, mut j) = (0, 0);
+    while i < n || j < m {
+        if i < n && j < m {
+            if let Some(s) = pair_score(&left[i], &right[j])
+                && s + dp[(i + 1) * w + j + 1] == dp[i * w + j]
+            {
+                out.push((Some(i), Some(j)));
+                i += 1;
+                j += 1;
+                continue;
+            }
+            if dp[(i + 1) * w + j] == dp[i * w + j] {
+                out.push((Some(i), None));
+                i += 1;
+            } else {
+                out.push((None, Some(j)));
+                j += 1;
+            }
+        } else if i < n {
+            out.push((Some(i), None));
+            i += 1;
+        } else {
+            out.push((None, Some(j)));
+            j += 1;
+        }
+    }
+    Some(out)
 }
 
 fn render_block(indent: &str, stage: &str, left: &[String], right: &[String], render: Render) -> Vec<String> {
@@ -925,8 +1086,9 @@ fn render_block(indent: &str, stage: &str, left: &[String], right: &[String], re
         Style::Columns => false,
         Style::Auto => left.len() <= LIST_STYLE_MAX_LINES && right.len() <= LIST_STYLE_MAX_LINES,
     };
-    let [left, right] = if render.compact {
-        compact_lines([left, right], render.encodings, render.label_first)
+    let keys = [left, right].map(|s| s.iter().map(|l| key_of(l)).collect::<Vec<_>>());
+    let units = if render.compact {
+        compact_units([left, right], render.encodings, render.label_first)
     } else {
         let width = [left, right]
             .iter()
@@ -938,9 +1100,25 @@ fn render_block(indent: &str, stage: &str, left: &[String], right: &[String], re
             .max(56);
         [left, right].map(|s| {
             s.iter()
-                .flat_map(|l| render_label(l, 16, width, render.label_first).unwrap_or_else(|| vec![normalize(l, render.encodings)]))
+                .map(|l| render_label(l, 16, width, render.label_first).unwrap_or_else(|| vec![normalize(l, render.encodings)]))
                 .collect()
         })
+    };
+    let alignment = if render.align && !list { align_units(&keys[0], &keys[1]) } else { None };
+    let [left, right] = match alignment {
+        Some(steps) => {
+            let (mut l, mut r) = (Vec::new(), Vec::new());
+            for (a, b) in steps {
+                let la = a.map_or(&[][..], |i| units[0][i].as_slice());
+                let rb = b.map_or(&[][..], |j| units[1][j].as_slice());
+                for k in 0..la.len().max(rb.len()) {
+                    l.push(la.get(k).cloned().unwrap_or_default());
+                    r.push(rb.get(k).cloned().unwrap_or_default());
+                }
+            }
+            [l, r]
+        }
+        None => units.map(|side| side.into_iter().flatten().collect::<Vec<String>>()),
     };
     let (left, right) = (left.as_slice(), right.as_slice());
     if list {
