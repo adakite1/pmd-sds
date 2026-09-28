@@ -914,7 +914,7 @@ impl Builds {
         }
         let mut cmd = Command::new("cargo");
         cmd.current_dir(self.rsdec.join(cpu.dir()))
-            .args(["build", "--release", "--message-format=json-opts-diagnostics"])
+            .args(["build", "--release", "--message-format=json-render-diagnostics"])
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
         if let Some(f) = feature
