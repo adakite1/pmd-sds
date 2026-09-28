@@ -10,6 +10,7 @@ use regex::Regex;
 use serde::Deserialize;
 
 use crate::corpus_gen;
+use crate::corpus_layout as layout;
 
 const REGIONS: [&str; 3] = ["us", "eu", "jp"];
 const ARM9_FEATURES: [(&str, &str); 3] = [("us", "na"), ("eu", "eu"), ("jp", "jp")];
@@ -43,8 +44,9 @@ const LOAD_OPS: [&str; 13] = [
 const STORE_OPS: [&str; 12] = ["str", "strb", "strh", "strd", "stm", "stmia", "stmib", "stmda", "stmdb", "stmfd", "push", "swp"];
 const OTHER_OPS: [&str; 8] = ["msr", "mrs", "mcr", "mrc", "svc", "swi", "udf", "nop"];
 
-const USAGE: &str = "usage: cargo xtask corpus [run|stub|strip|sync|status|lock|generate|verify] [--corpus <asm-corpus dir>] \
+const USAGE: &str = "usage: cargo xtask corpus [run|stub|lint|fix|strip|sync|status|lock|generate|verify] [--corpus <asm-corpus dir>] \
                      [--decomp <pmd-sky clone with all three regions built>] [--no-sync] [--encodings] \
+                     [--stub-mode in-place|position|position-with-warn] [lint|fix [files...] [--fix-structure] [--fix-ordering] [--fix-all]] \
                      [--style <auto|list|columns>[,compact][,align][,label_last|label_first]] [--labels hide|before|after]";
 
 static COMMAND: LazyLock<Regex> = LazyLock::new(|| {
@@ -207,8 +209,16 @@ enum Labels {
     After,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StubMode {
+    InPlace,
+    Position,
+    PositionWithWarn,
+}
+
 #[derive(Clone, Copy)]
-struct Render {
+struct Options {
+    stub_mode: StubMode,
     encodings: bool,
     style: Style,
     compact: bool,
@@ -235,14 +245,31 @@ pub fn main(args: &[String]) -> Result<()> {
     let mut corpus = None;
     let mut decomp = None;
     let mut no_sync = false;
-    let mut render = Render { encodings: false, style: Style::Auto, compact: false, align: false, label_first: false, labels: Labels::Hide };
+    let mut files: Vec<PathBuf> = Vec::new();
+    let (mut fix_structure, mut fix_ordering) = (false, false);
+    let mut opts = Options { stub_mode: StubMode::InPlace, encodings: false, style: Style::Auto, compact: false, align: false, label_first: false, labels: Labels::Hide };
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
+            "help" | "--help" | "-h" => {
+                println!("{USAGE}");
+                return Ok(());
+            }
             "--corpus" => corpus = Some(PathBuf::from(it.next().context("--corpus needs a path")?)),
             "--decomp" => decomp = Some(PathBuf::from(it.next().context("--decomp needs a path")?)),
             "--no-sync" => no_sync = true,
-            "--encodings" => render.encodings = true,
+            "--fix-structure" => fix_structure = true,
+            "--fix-ordering" => fix_ordering = true,
+            "--fix-all" => (fix_structure, fix_ordering) = (true, true),
+            "--stub-mode" => {
+                opts.stub_mode = match it.next().map(String::as_str) {
+                    Some("in-place") => StubMode::InPlace,
+                    Some("position") => StubMode::Position,
+                    Some("position-with-warn") => StubMode::PositionWithWarn,
+                    other => bail!("--stub-mode expects in-place, position or position-with-warn, got {other:?}\n{USAGE}"),
+                }
+            }
+            "--encodings" => opts.encodings = true,
             "--style" => {
                 let spec = it.next().context("--style needs a value")?;
                 let mut layout = None;
@@ -253,11 +280,11 @@ pub fn main(args: &[String]) -> Result<()> {
                         "list" => Style::List,
                         "columns" => Style::Columns,
                         "compact" => {
-                            render.compact = true;
+                            opts.compact = true;
                             continue;
                         }
                         "align" => {
-                            render.align = true;
+                            opts.align = true;
                             continue;
                         }
                         "label_last" | "label_first" => {
@@ -273,11 +300,11 @@ pub fn main(args: &[String]) -> Result<()> {
                     };
                     ensure!(layout.replace(l).is_none(), "--style takes at most one of auto, list, columns");
                 }
-                render.style = layout.unwrap_or(Style::Auto);
-                render.label_first = label_order.unwrap_or(false);
+                opts.style = layout.unwrap_or(Style::Auto);
+                opts.label_first = label_order.unwrap_or(false);
             }
             "--labels" => {
-                render.labels = match it.next().map(String::as_str) {
+                opts.labels = match it.next().map(String::as_str) {
                     Some("hide") => Labels::Hide,
                     Some("before") => Labels::Before,
                     Some("after") => Labels::After,
@@ -285,6 +312,7 @@ pub fn main(args: &[String]) -> Result<()> {
                 }
             }
             s if !s.starts_with('-') && sub.is_none() => sub = Some(s.to_string()),
+            s if !s.starts_with('-') && matches!(sub.as_deref(), Some("lint" | "fix")) => files.push(PathBuf::from(s)),
             s => bail!("unexpected argument '{s}'\n{USAGE}"),
         }
     }
@@ -299,17 +327,24 @@ pub fn main(args: &[String]) -> Result<()> {
     match sub.as_deref().unwrap_or("run") {
         "strip" => strip_all(&rsdec),
         "lock" => make_lock(&rsdec, &corpus),
-        "run" => pipeline(&rsdec, &corpus, Mode::Run, render),
-        "sync" => pipeline(&rsdec, &corpus, Mode::Sync, render),
-        "status" => pipeline(&rsdec, &corpus, Mode::Status, render),
-        "stub" => pipeline(&rsdec, &corpus, Mode::Stub, render),
-        "generate" => generate(&rsdec, &decomp()?, &corpus, no_sync, render),
+        "run" => pipeline(&rsdec, &corpus, Mode::Run, opts),
+        "sync" => pipeline(&rsdec, &corpus, Mode::Sync, opts),
+        "status" => pipeline(&rsdec, &corpus, Mode::Status, opts),
+        "stub" => pipeline(&rsdec, &corpus, Mode::Stub, opts),
+        "generate" => generate(&rsdec, &decomp()?, &corpus, no_sync, opts),
         "verify" => corpus_gen::verify(&decomp()?, &corpus),
+        "lint" => lint_cmd(&rsdec, &files),
+        "fix" => {
+            if !fix_structure && !fix_ordering {
+                fix_structure = true;
+            }
+            fix_cmd(&rsdec, &files, fix_structure, fix_ordering)
+        }
         s => bail!("unknown subcommand '{s}'\n{USAGE}"),
     }
 }
 
-fn generate(rsdec: &Path, decomp: &Path, corpus: &Path, no_sync: bool, render: Render) -> Result<()> {
+fn generate(rsdec: &Path, decomp: &Path, corpus: &Path, no_sync: bool, opts: Options) -> Result<()> {
     let name = corpus.file_name().context("--corpus has no final path component")?.to_string_lossy();
     let staging = corpus.with_file_name(format!("{name}.new"));
     let is_generated = |dir: &Path| -> Result<bool> {
@@ -336,7 +371,7 @@ fn generate(rsdec: &Path, decomp: &Path, corpus: &Path, no_sync: bool, render: R
         return Ok(());
     }
     make_lock(rsdec, corpus)?;
-    pipeline(rsdec, corpus, Mode::Sync, render)
+    pipeline(rsdec, corpus, Mode::Sync, opts)
 }
 
 fn walk(dir: &Path, skip: &[&str], out: &mut Vec<PathBuf>) -> Result<()> {
@@ -536,8 +571,8 @@ fn load_sources(rsdec: &Path, errors: &mut Vec<String>, mut stubs: Option<&mut S
         })
         .collect::<Result<_>>()?;
     if let Some(st) = stubs.as_deref_mut() {
-        for (_, _, text) in &files {
-            st.seen.extend(LINK_SECTION.captures_iter(text).map(|c| c[1].to_string()));
+        for (_, rel, text) in &files {
+            st.note_sections(rel, text);
         }
     }
     let mut out = Vec::new();
@@ -562,8 +597,10 @@ fn load_sources(rsdec: &Path, errors: &mut Vec<String>, mut stubs: Option<&mut S
 struct Stubs<'a> {
     lock: &'a [LockEntry],
     corpus: &'a Corpus,
-    seen: HashSet<String>,
+    mode: StubMode,
+    seen: HashMap<String, String>,
     written: usize,
+    warnings: Vec<String>,
     modules: HashMap<String, Vec<BTreeMap<String, u64>>>,
 }
 
@@ -575,33 +612,68 @@ fn region_addrs(rec: &Record) -> BTreeMap<String, u64> {
 }
 
 impl Stubs<'_> {
-    fn expand(&mut self, rel: &str, text: &str, errors: &mut Vec<String>) -> Result<String> {
-        let mut out = String::new();
-        let mut last = 0;
-        let mut starts = HashSet::new();
-        for c in STUB.captures_iter(text) {
-            let m = c.get(0).unwrap();
-            starts.insert(m.start());
-            let line = line_of(text, m.start());
-            let indent: String =
-                text.lines().nth(line).unwrap_or("").chars().take_while(|c| c.is_whitespace()).collect();
-            match self.stub(&c[1], &indent)? {
-                Ok(code) => {
-                    out.push_str(&text[last..m.start()]);
-                    out.push_str(&code);
-                    last = m.end();
-                    self.written += 1;
-                }
-                Err(e) => errors.push(format!("{rel}:{}: {e}", line + 1)),
-            }
+    fn note_sections(&mut self, rel: &str, text: &str) {
+        for c in LINK_SECTION.captures_iter(text) {
+            let at = format!("{rel}:{}", line_of(text, c.get(0).unwrap().start()) + 1);
+            self.seen.entry(c[1].to_string()).or_insert(at);
         }
+    }
+
+    fn expand(&mut self, rel: &str, text: &str, errors: &mut Vec<String>) -> Result<String> {
+        let starts: HashSet<usize> = STUB.find_iter(text).map(|m| m.start()).collect();
         for (i, _) in text.match_indices(STUB_PREFIX) {
             if !starts.contains(&i) {
                 errors.push(format!("{rel}:{}: malformed stub comment", line_of(text, i) + 1));
             }
         }
-        out.push_str(&text[last..]);
-        Ok(out)
+        let mut text = text.to_string();
+        let mut skipped = 0;
+        loop {
+            let Some(c) = STUB.captures_iter(&text).nth(skipped) else { break };
+            let (m, query) = (c.get(0).unwrap().range(), c[1].to_string());
+            let line = line_of(&text, m.start);
+            let spec = match self.stub(&query, &format!("{rel}:{}", line + 1))? {
+                Ok(spec) => spec,
+                Err(e) => {
+                    errors.push(format!("{rel}:{}: {e}", line + 1));
+                    skipped += 1;
+                    continue;
+                }
+            };
+            let indent: String = text.split('\n').nth(line).unwrap_or("").chars().take_while(|c| c.is_whitespace()).collect();
+            let in_place = |text: &str, warn: bool| {
+                let body = stub_lines(&spec, warn);
+                let joined = body.iter().enumerate().map(|(i, l)| if i == 0 { l.clone() } else { format!("{indent}{l}") });
+                format!("{}{}{}", &text[..m.start], joined.collect::<Vec<_>>().join("\n"), &text[m.end..])
+            };
+            if self.mode == StubMode::InPlace {
+                text = in_place(&text, false);
+                self.written += 1;
+                continue;
+            }
+            let removed = remove_span(&text, m.clone());
+            match layout::position(&removed, &spec.section, spec.arm9) {
+                Some(p) => {
+                    text = layout::insert_at(&removed, &p, &stub_lines(&spec, false));
+                    self.written += 1;
+                }
+                None if self.mode == StubMode::PositionWithWarn => {
+                    text = in_place(&text, true);
+                    self.written += 1;
+                    self.warnings.push(format!("{rel}:{}: stub for {} expanded in place: positioning failed", line + 1, spec.name));
+                }
+                None => {
+                    self.seen.remove(&spec.section);
+                    self.warnings.push(format!(
+                        "{rel}:{}: stub for {} left unexpanded: no surrounding link_sections found to position against",
+                        line + 1,
+                        spec.name
+                    ));
+                    skipped += 1;
+                }
+            }
+        }
+        Ok(text)
     }
 
     fn module(&mut self, dir: &str) -> Result<&[BTreeMap<String, u64>]> {
@@ -628,7 +700,7 @@ impl Stubs<'_> {
             .map(|(_, us)| us))
     }
 
-    fn stub(&mut self, query: &str, indent: &str) -> Result<Result<String, String>> {
+    fn stub(&mut self, query: &str, at: &str) -> Result<Result<StubSpec, String>> {
         let u = match resolve_unit(self.lock, query) {
             Ok(u) => u,
             Err(e) => return Ok(Err(e)),
@@ -670,15 +742,119 @@ impl Stubs<'_> {
             }
         };
         let section = format!("{prefix}{token}");
-        if !self.seen.insert(section.clone()) {
-            return Ok(Err(format!("link_section \"{section}\" already exists in the codebase")));
+        if let Some(existing) = self.seen.get(&section) {
+            return Ok(Err(format!("link_section \"{section}\" already exists at {existing}")));
         }
-        Ok(Ok(format!(
-            "#[inline(never)]\n{indent}#[unsafe(link_section = \"{section}\")]\n{indent}#[unsafe(no_mangle)]\n\
-             {indent}pub extern \"C\" fn {}() {{\n{indent}    \n{indent}}}",
-            e.name
-        )))
+        self.seen.insert(section.clone(), format!("{at} (stub)"));
+        Ok(Ok(StubSpec { section, name: e.name.clone(), arm9: e.dir().starts_with("arm9/") }))
     }
+}
+
+struct StubSpec {
+    section: String,
+    name: String,
+    arm9: bool,
+}
+
+fn stub_lines(spec: &StubSpec, warn: bool) -> Vec<String> {
+    let mut out = Vec::new();
+    if warn {
+        out.push(layout::POSITION_WARN.to_string());
+    }
+    out.extend([
+        "#[inline(never)]".to_string(),
+        format!("#[unsafe(link_section = \"{}\")]", spec.section),
+        "#[unsafe(no_mangle)]".to_string(),
+        format!("pub extern \"C\" fn {}() {{", spec.name),
+        "    ".to_string(),
+        "}".to_string(),
+    ]);
+    out
+}
+
+fn remove_span(text: &str, span: std::ops::Range<usize>) -> String {
+    let line_start = text[..span.start].rfind('\n').map_or(0, |i| i + 1);
+    let line_end = text[span.end..].find('\n').map_or(text.len(), |i| span.end + i);
+    if text[line_start..span.start].trim().is_empty() && text[span.end..line_end].trim().is_empty() {
+        let cut_end = if line_end < text.len() { line_end + 1 } else { line_end };
+        format!("{}{}", &text[..line_start], &text[cut_end..])
+    } else {
+        format!("{}{}", &text[..span.start], &text[span.end..])
+    }
+}
+
+fn warn(msg: &str) {
+    anstream::println!("\x1b[33mWARN:\x1b[0m {msg}");
+}
+
+fn lint_targets(rsdec: &Path, files: &[PathBuf]) -> Result<Vec<(PathBuf, String)>> {
+    if files.is_empty() {
+        return Ok(source_files(rsdec)?
+            .into_iter()
+            .filter_map(|p| {
+                let text = fs::read_to_string(&p).ok()?;
+                COMMAND.is_match(&text).then_some(p)
+            })
+            .map(|p| {
+                let rel = rel_str(rsdec, &p);
+                (p, rel)
+            })
+            .collect());
+    }
+    files
+        .iter()
+        .map(|f| {
+            let p = fs::canonicalize(f).with_context(|| format!("no such file {}", f.display()))?;
+            let rel = p.strip_prefix(rsdec).map_or_else(|_| p.display().to_string(), |r| r.to_string_lossy().into_owned());
+            Ok((p, rel))
+        })
+        .collect()
+}
+
+fn lint_text(rel: &str, text: &str) -> usize {
+    let found = layout::lint(text, rel.ends_with(".rs"));
+    for (line, msg) in &found {
+        warn(&format!("{rel}:{}: {msg}", line + 1));
+    }
+    found.len()
+}
+
+fn lint_cmd(rsdec: &Path, files: &[PathBuf]) -> Result<()> {
+    let mut total = 0;
+    let targets = lint_targets(rsdec, files)?;
+    for (path, rel) in &targets {
+        total += lint_text(rel, &fs::read_to_string(path)?);
+    }
+    println!("lint: {} files, {total} warnings", targets.len());
+    Ok(())
+}
+
+fn fix_cmd(rsdec: &Path, files: &[PathBuf], structure: bool, ordering: bool) -> Result<()> {
+    let targets = lint_targets(rsdec, files)?;
+    let mut changed = 0;
+    for (path, rel) in &targets {
+        let original = fs::read_to_string(path)?;
+        let mut text = original.clone();
+        if structure {
+            match layout::fix_structure(&text) {
+                Some(t) => text = t,
+                None => warn(&format!("{rel}: cfg_select layout not recognized; structure left as is")),
+            }
+        }
+        if ordering {
+            let (t, problems) = layout::fix_ordering(&text);
+            text = t;
+            for p in problems {
+                warn(&format!("{rel}: {p}"));
+            }
+        }
+        if text != original && write_if_unchanged(path, rel, &original, &text)? {
+            changed += 1;
+        }
+        lint_text(rel, &text);
+    }
+    println!("fix: {} files checked, {changed} rewritten", targets.len());
+    Ok(())
 }
 
 fn resolve_unit(lock: &[LockEntry], query: &str) -> Result<usize, String> {
@@ -738,7 +914,7 @@ impl Builds {
         }
         let mut cmd = Command::new("cargo");
         cmd.current_dir(self.rsdec.join(cpu.dir()))
-            .args(["build", "--release", "--message-format=json-render-diagnostics"])
+            .args(["build", "--release", "--message-format=json-opts-diagnostics"])
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
         if let Some(f) = feature
@@ -1276,33 +1452,33 @@ fn align_units(left: &[Key], right: &[Key]) -> Option<Vec<(Option<usize>, Option
     Some(out)
 }
 
-fn render_block(indent: &str, stage: &str, left: &[String], right: &[String], render: Render) -> Vec<String> {
+fn render_block(indent: &str, stage: &str, left: &[String], right: &[String], opts: Options) -> Vec<String> {
     let ltitle = format!("asm-corpus {stage}");
     let rtitle = format!("rsdec {stage}");
-    let list = match render.style {
+    let list = match opts.style {
         Style::List => true,
         Style::Columns => false,
         Style::Auto => left.len() <= LIST_STYLE_MAX_LINES && right.len() <= LIST_STYLE_MAX_LINES,
     };
     let keys = [left, right].map(|s| s.iter().map(|l| key_of(l)).collect::<Vec<_>>());
-    let units = if render.compact {
-        compact_units([left, right], render.encodings, render.label_first)
+    let units = if opts.compact {
+        compact_units([left, right], opts.encodings, opts.label_first)
     } else {
         let width = [left, right]
             .iter()
             .flat_map(|s| s.iter())
             .filter(|l| !l.starts_with(MARK_TAG))
-            .map(|l| normalize(l, render.encodings).len())
+            .map(|l| normalize(l, opts.encodings).len())
             .max()
             .unwrap_or(0)
             .max(56);
         [left, right].map(|s| {
             s.iter()
-                .map(|l| render_label(l, 16, width, render.label_first).unwrap_or_else(|| vec![normalize(l, render.encodings)]))
+                .map(|l| render_label(l, 16, width, opts.label_first).unwrap_or_else(|| vec![normalize(l, opts.encodings)]))
                 .collect()
         })
     };
-    let alignment = if render.align && !list { align_units(&keys[0], &keys[1]) } else { None };
+    let alignment = if opts.align && !list { align_units(&keys[0], &keys[1]) } else { None };
     let [left, right] = match alignment {
         Some(steps) => {
             let (mut l, mut r) = (Vec::new(), Vec::new());
@@ -1353,7 +1529,7 @@ fn render_block(indent: &str, stage: &str, left: &[String], right: &[String], re
     out
 }
 
-fn pipeline(rsdec: &Path, corpus_root: &Path, mode: Mode, render: Render) -> Result<()> {
+fn pipeline(rsdec: &Path, corpus_root: &Path, mode: Mode, opts: Options) -> Result<()> {
     let lock = read_lock(rsdec)?;
     let corpus = walk_corpus(corpus_root)?;
     let lock_paths: BTreeSet<&str> = lock.iter().map(|e| e.path.as_str()).collect();
@@ -1368,13 +1544,13 @@ fn pipeline(rsdec: &Path, corpus_root: &Path, mode: Mode, render: Render) -> Res
     }
 
     let mut errors = Vec::new();
-    let mut stubs = matches!(mode, Mode::Run | Mode::Stub).then(|| Stubs { lock: &lock, corpus: &corpus, seen: HashSet::new(), written: 0, modules: HashMap::new() });
+    let mut stubs = matches!(mode, Mode::Run | Mode::Stub).then(|| Stubs { lock: &lock, corpus: &corpus, mode: opts.stub_mode, seen: HashMap::new(), written: 0, warnings: Vec::new(), modules: HashMap::new() });
     if mode == Mode::Stub {
         let stubs = stubs.as_mut().unwrap();
         let files = source_files(rsdec)?;
         let texts: Vec<String> = files.iter().map(fs::read_to_string).collect::<std::io::Result<_>>()?;
-        for t in &texts {
-            stubs.seen.extend(LINK_SECTION.captures_iter(t).map(|c| c[1].to_string()));
+        for (path, text) in files.iter().zip(&texts) {
+            stubs.note_sections(&rel_str(rsdec, path), text);
         }
         let mut expanded = Vec::new();
         for (path, text) in files.iter().zip(&texts) {
@@ -1388,11 +1564,15 @@ fn pipeline(rsdec: &Path, corpus_root: &Path, mode: Mode, render: Render) -> Res
                 write_if_unchanged(path, &rel_str(rsdec, path), text, new)?;
             }
         }
+        for w in &stubs.warnings {
+            warn(w);
+        }
         println!("stubs written: {}", stubs.written);
         return Ok(());
     }
     let sources = load_sources(rsdec, &mut errors, stubs.as_mut())?;
     let stubs_written = stubs.as_ref().map_or(0, |s| s.written);
+    let stub_warnings = stubs.as_ref().map_or(Vec::new(), |s| s.warnings.clone());
 
     let mut raw_cmds = Vec::new();
     for (si, s) in sources.iter().enumerate() {
@@ -1508,12 +1688,12 @@ fn pipeline(rsdec: &Path, corpus_root: &Path, mode: Mode, render: Render) -> Res
                 };
                 let elf = builds.elf(cpu, stage)?;
                 right.push(format!("== {}/{sym} ({})", cpu.label(), cpu.feature(stage).unwrap_or("default")));
-                match disassemble(&elf, &sym, render.labels) {
+                match disassemble(&elf, &sym, opts.labels) {
                     Ok(lines) => right.extend(lines),
                     Err(e) => errors.push(format!("{at}: {e}")),
                 }
             }
-            blocks[c.source].entry(c.line).or_default().extend(render_block(&c.indent, stage, &left, &right, render));
+            blocks[c.source].entry(c.line).or_default().extend(render_block(&c.indent, stage, &left, &right, opts));
             block_count += 1;
         }
         if !errors.is_empty() {
@@ -1583,6 +1763,16 @@ fn pipeline(rsdec: &Path, corpus_root: &Path, mode: Mode, render: Render) -> Res
         "commands: {} ({complete} complete), stubs: {stubs_written}, blocks: {block_count}, files rewritten: {rewritten}, corpus moves: {moved}, duplicates removed: {removed}",
         cmds.len()
     );
+    for w in &stub_warnings {
+        warn(w);
+    }
+    if mode == Mode::Run {
+        for (s, text) in sources.iter().zip(&new_texts) {
+            if COMMAND.is_match(text) {
+                lint_text(&s.rel, text);
+            }
+        }
+    }
     Ok(())
 }
 
@@ -1662,7 +1852,7 @@ fn source_files(rsdec: &Path) -> Result<Vec<PathBuf>> {
 
 fn write_if_unchanged(path: &Path, rel: &str, original: &str, new: &str) -> Result<bool> {
     if fs::read_to_string(path)? != original {
-        eprintln!("skipped {rel}: changed on disk during this run");
+        warn(&format!("{rel}: changed on disk during this run; not rewritten"));
         return Ok(false);
     }
     let tmp = path.with_extension("xtask-tmp");

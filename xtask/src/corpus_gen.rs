@@ -566,6 +566,25 @@ fn to_json(record: &OutRecord) -> Result<Vec<u8>> {
     Ok(buf)
 }
 
+struct TempDir(PathBuf);
+
+impl TempDir {
+    fn new(path: PathBuf) -> Result<TempDir> {
+        fs::create_dir_all(&path)?;
+        Ok(TempDir(path))
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
 pub fn generate(decomp: &Path, out_root: &Path) -> Result<usize> {
     let rom_path = |r: &str| decomp.join(format!("build/pmdsky.{r}/pmdsky.{r}.nds"));
     let mut roms = HashMap::new();
@@ -578,8 +597,8 @@ pub fn generate(decomp: &Path, out_root: &Path) -> Result<usize> {
     let arm7_bytes = arm7_mod_bytes(&roms["us"])?;
     let arm9_mods = arm9_modules();
 
-    let workdir = std::env::temp_dir().join(format!("asm-corpus-gen-{}", std::process::id()));
-    fs::create_dir_all(&workdir)?;
+    let workdir = TempDir::new(std::env::temp_dir().join(format!("asm-corpus-gen-{}", std::process::id())))?;
+    let workdir = workdir.path();
 
     let mut module_stats: HashMap<(String, String, String), Stats> = HashMap::new();
     let mut module_data: HashMap<(String, String), (u64, Vec<u8>)> = HashMap::new();
@@ -659,7 +678,6 @@ pub fn generate(decomp: &Path, out_root: &Path) -> Result<usize> {
             Ok(())
         })?;
     }
-    let _ = fs::remove_dir_all(&workdir);
 
     type Key = (&'static str, String, String);
     let mut corpus: HashMap<Key, Vec<(&'static str, Func)>> = HashMap::new();
