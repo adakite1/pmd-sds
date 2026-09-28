@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 #![feature(core_intrinsics)]
+#![feature(used_with_arg)]
 #![allow(internal_features)]
 
 const _: () = assert!(
@@ -1045,4 +1046,6 @@ pub extern "C" fn _start() -> ! {
         );
     }
 }
+
+/*(keep_symbols_list)*/
 

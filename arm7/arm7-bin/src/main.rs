@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 #![feature(core_intrinsics)]
+#![feature(used_with_arg)]
 #![allow(internal_features)]
 
 use core::arch::{asm, naked_asm};
@@ -405,4 +406,6 @@ pub extern "C" fn _start() -> ! {
         );
     }
 }
+
+/*(keep_symbols_list)*/
 

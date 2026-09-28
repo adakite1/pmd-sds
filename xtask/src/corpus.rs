@@ -10,6 +10,7 @@ use regex::Regex;
 use serde::Deserialize;
 
 use crate::corpus_gen;
+use crate::corpus_keep as keep;
 use crate::corpus_layout as layout;
 
 const REGIONS: [&str; 3] = ["us", "eu", "jp"];
@@ -44,9 +45,9 @@ const LOAD_OPS: [&str; 13] = [
 const STORE_OPS: [&str; 12] = ["str", "strb", "strh", "strd", "stm", "stmia", "stmib", "stmda", "stmdb", "stmfd", "push", "swp"];
 const OTHER_OPS: [&str; 8] = ["msr", "mrs", "mcr", "mrc", "svc", "swi", "udf", "nop"];
 
-const USAGE: &str = "usage: cargo xtask corpus [run|stub|lint|fix|strip|sync|status|lock|generate|verify] [--corpus <asm-corpus dir>] \
+const USAGE: &str = "usage: cargo xtask corpus [run|stub|lint|fix|keep-symbols-list [symbols...]|strip|sync|status|lock|generate|verify] [--corpus <asm-corpus dir>] \
                      [--decomp <pmd-sky clone with all three regions built>] [--no-sync] [--encodings] \
-                     [--stub-mode in-place|position|position-with-warn] [lint|fix [files...] [--fix-structure] [--fix-ordering] [--fix-all]] \
+                     [--stub-mode in-place|position|position-with-warn] [--no-auto-keep] [keep-symbols-list --remove] [lint|fix [files...] [--fix-structure] [--fix-ordering] [--fix-all]] \
                      [--style <auto|list|columns>[,compact][,align][,label_last|label_first]] [--labels hide|before|after]";
 
 static COMMAND: LazyLock<Regex> = LazyLock::new(|| {
@@ -69,15 +70,35 @@ static WORD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\.word\t0x([0-9a-f
 static POOL_REF: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[pc, #-?\d+\].*@ \(?([0-9a-f]+)").unwrap());
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
-enum Cpu {
+pub(crate) enum Cpu {
     Arm7,
     Arm9,
 }
 
 impl Cpu {
-    const ALL: [Cpu; 2] = [Cpu::Arm7, Cpu::Arm9];
+    pub(crate) const ALL: [Cpu; 2] = [Cpu::Arm7, Cpu::Arm9];
 
-    fn dir(self) -> &'static str {
+    pub(crate) fn cfg(self) -> &'static str {
+        match self {
+            Cpu::Arm7 => "armv4t",
+            Cpu::Arm9 => "armv5te",
+        }
+    }
+
+    fn of_path(rsdec: &Path, path: &Path) -> Option<Cpu> {
+        Cpu::ALL.into_iter().find(|c| path.starts_with(rsdec.join(c.dir())))
+    }
+
+    fn from_label(s: &str) -> Option<(Cpu, &str)> {
+        Cpu::ALL.into_iter().find_map(|cpu| {
+            [format!("{}/", cpu.label()), format!("{}/", cpu.label().replace('_', "-"))]
+                .iter()
+                .find_map(|p| s.strip_prefix(p.as_str()))
+                .map(|rest| (cpu, rest))
+        })
+    }
+
+    pub(crate) fn dir(self) -> &'static str {
         match self {
             Cpu::Arm7 => "arm7",
             Cpu::Arm9 => "arm9",
@@ -168,6 +189,7 @@ struct Source {
     rel: String,
     original: String,
     stripped: String,
+    stubbed: bool,
     commands: Vec<RawCommand>,
 }
 
@@ -219,6 +241,7 @@ enum StubMode {
 #[derive(Clone, Copy)]
 struct Options {
     stub_mode: StubMode,
+    auto_keep: bool,
     encodings: bool,
     style: Style,
     compact: bool,
@@ -246,8 +269,10 @@ pub fn main(args: &[String]) -> Result<()> {
     let mut decomp = None;
     let mut no_sync = false;
     let mut files: Vec<PathBuf> = Vec::new();
+    let mut symbols: Vec<String> = Vec::new();
+    let mut remove = false;
     let (mut fix_structure, mut fix_ordering) = (false, false);
-    let mut opts = Options { stub_mode: StubMode::InPlace, encodings: false, style: Style::Auto, compact: false, align: false, label_first: false, labels: Labels::Hide };
+    let mut opts = Options { stub_mode: StubMode::InPlace, auto_keep: true, encodings: false, style: Style::Auto, compact: false, align: false, label_first: false, labels: Labels::Hide };
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -258,6 +283,8 @@ pub fn main(args: &[String]) -> Result<()> {
             "--corpus" => corpus = Some(PathBuf::from(it.next().context("--corpus needs a path")?)),
             "--decomp" => decomp = Some(PathBuf::from(it.next().context("--decomp needs a path")?)),
             "--no-sync" => no_sync = true,
+            "--no-auto-keep" => opts.auto_keep = false,
+            "--remove" => remove = true,
             "--fix-structure" => fix_structure = true,
             "--fix-ordering" => fix_ordering = true,
             "--fix-all" => (fix_structure, fix_ordering) = (true, true),
@@ -313,6 +340,7 @@ pub fn main(args: &[String]) -> Result<()> {
             }
             s if !s.starts_with('-') && sub.is_none() => sub = Some(s.to_string()),
             s if !s.starts_with('-') && matches!(sub.as_deref(), Some("lint" | "fix")) => files.push(PathBuf::from(s)),
+            s if !s.starts_with('-') && sub.as_deref() == Some("keep-symbols-list") => symbols.push(s.to_string()),
             s => bail!("unexpected argument '{s}'\n{USAGE}"),
         }
     }
@@ -327,10 +355,11 @@ pub fn main(args: &[String]) -> Result<()> {
     match sub.as_deref().unwrap_or("run") {
         "strip" => strip_all(&rsdec),
         "lock" => make_lock(&rsdec, &corpus),
-        "run" => pipeline(&rsdec, &corpus, Mode::Run, opts),
-        "sync" => pipeline(&rsdec, &corpus, Mode::Sync, opts),
-        "status" => pipeline(&rsdec, &corpus, Mode::Status, opts),
-        "stub" => pipeline(&rsdec, &corpus, Mode::Stub, opts),
+        "run" => pipeline(&rsdec, &corpus, Mode::Run, opts, false),
+        "sync" => pipeline(&rsdec, &corpus, Mode::Sync, opts, false),
+        "status" => pipeline(&rsdec, &corpus, Mode::Status, opts, false),
+        "stub" => pipeline(&rsdec, &corpus, Mode::Stub, opts, false),
+        "keep-symbols-list" => keep_cmd(&rsdec, &symbols, remove),
         "generate" => generate(&rsdec, &decomp()?, &corpus, no_sync, opts),
         "verify" => corpus_gen::verify(&decomp()?, &corpus),
         "lint" => lint_cmd(&rsdec, &files),
@@ -371,7 +400,7 @@ fn generate(rsdec: &Path, decomp: &Path, corpus: &Path, no_sync: bool, opts: Opt
         return Ok(());
     }
     make_lock(rsdec, corpus)?;
-    pipeline(rsdec, corpus, Mode::Sync, opts)
+    pipeline(rsdec, corpus, Mode::Sync, opts, false)
 }
 
 fn walk(dir: &Path, skip: &[&str], out: &mut Vec<PathBuf>) -> Result<()> {
@@ -584,12 +613,13 @@ fn load_sources(rsdec: &Path, errors: &mut Vec<String>, mut stubs: Option<&mut S
                 continue;
             }
         };
-        let stripped = match stubs.as_deref_mut() {
+        let expanded = match stubs.as_deref_mut() {
             Some(st) => st.expand(&rel, &stripped, errors)?,
-            None => stripped,
+            None => stripped.clone(),
         };
-        let commands = parse_commands(&rel, &stripped, errors);
-        out.push(Source { path, rel, original, stripped, commands });
+        let stubbed = expanded != stripped;
+        let commands = parse_commands(&rel, &expanded, errors);
+        out.push(Source { path, rel, original, stripped: expanded, stubbed, commands });
     }
     Ok(out)
 }
@@ -902,8 +932,9 @@ fn state_of(records: &[&Record], done: &Option<(String, BTreeSet<String>)>) -> S
 
 struct Builds {
     rsdec: PathBuf,
+    indexes: HashMap<Cpu, keep::Index>,
     elves: HashMap<(Cpu, Option<&'static str>), PathBuf>,
-    tables: HashMap<Cpu, HashSet<String>>,
+    tables: HashMap<(Cpu, Option<&'static str>), HashSet<String>>,
 }
 
 impl Builds {
@@ -938,9 +969,10 @@ impl Builds {
         Ok(elf)
     }
 
-    fn table(&mut self, cpu: Cpu) -> Result<&HashSet<String>> {
-        if !self.tables.contains_key(&cpu) {
-            let elf = self.elf(cpu, "us")?;
+    fn table(&mut self, cpu: Cpu, region: &str) -> Result<&HashSet<String>> {
+        let key = (cpu, cpu.feature(region));
+        if !self.tables.contains_key(&key) {
+            let elf = self.elf(cpu, region)?;
             let data = fs::read(&elf)?;
             let file = object::File::parse(&*data)?;
             let names = file
@@ -948,22 +980,25 @@ impl Builds {
                 .filter(|s| s.is_definition())
                 .filter_map(|s| s.name().ok().map(String::from))
                 .collect();
-            self.tables.insert(cpu, names);
+            self.tables.insert(key, names);
         }
-        Ok(&self.tables[&cpu])
+        Ok(&self.tables[&key])
     }
 
-    fn resolve_sym(&mut self, query: &str) -> Result<Result<(Cpu, String), String>> {
-        for cpu in Cpu::ALL {
-            for prefix in [format!("{}/", cpu.label()), format!("{}/", cpu.label().replace('_', "-"))] {
-                if let Some(rest) = query.strip_prefix(&prefix) {
-                    return Ok(Ok((cpu, rest.to_string())));
-                }
-            }
+    fn resolve_sym(&mut self, query: &str, texts: &HashMap<PathBuf, String>) -> Result<Result<(Cpu, String), String>> {
+        if let Some((cpu, rest)) = Cpu::from_label(query) {
+            return Ok(Ok((cpu, rest.to_string())));
         }
         let mut found = Vec::new();
         for cpu in Cpu::ALL {
-            if self.table(cpu)?.contains(query) {
+            if self.table(cpu, "us")?.contains(query) {
+                found.push(cpu);
+                continue;
+            }
+            if !self.indexes.contains_key(&cpu) {
+                self.indexes.insert(cpu, keep::Binary::load(&self.rsdec, cpu)?.index(texts)?);
+            }
+            if self.indexes[&cpu].resolves(query) {
                 found.push(cpu);
             }
         }
@@ -1529,7 +1564,7 @@ fn render_block(indent: &str, stage: &str, left: &[String], right: &[String], op
     out
 }
 
-fn pipeline(rsdec: &Path, corpus_root: &Path, mode: Mode, opts: Options) -> Result<()> {
+fn pipeline(rsdec: &Path, corpus_root: &Path, mode: Mode, opts: Options, retry: bool) -> Result<()> {
     let lock = read_lock(rsdec)?;
     let corpus = walk_corpus(corpus_root)?;
     let lock_paths: BTreeSet<&str> = lock.iter().map(|e| e.path.as_str()).collect();
@@ -1649,9 +1684,61 @@ fn pipeline(rsdec: &Path, corpus_root: &Path, mode: Mode, opts: Options) -> Resu
     let mut new_texts: Vec<String> = sources.iter().map(|s| s.original.clone()).collect();
     let mut block_count = 0;
     if mode == Mode::Run {
-        let mut builds = Builds { rsdec: rsdec.to_path_buf(), elves: HashMap::new(), tables: HashMap::new() };
+        let mut builds = Builds { rsdec: rsdec.to_path_buf(), indexes: HashMap::new(), elves: HashMap::new(), tables: HashMap::new() };
+        let texts: HashMap<PathBuf, String> = sources.iter().map(|s| (s.path.clone(), s.stripped.clone())).collect();
+        let mut normalized = 0;
+        for src in &sources {
+            if let Some(cpu) = Cpu::of_path(rsdec, &src.path)
+                && let Some(fixed) = keep::normalize(&src.original, cpu)
+                && write_if_unchanged(&src.path, &src.rel, &src.original, &fixed)?
+            {
+                normalized += 1;
+            }
+        }
+        if normalized > 0 {
+            println!("keep list: regenerated {normalized} section(s) in canonical form; running again");
+            return pipeline(rsdec, corpus_root, mode, opts, retry);
+        }
+        let mut missing: BTreeMap<Cpu, BTreeSet<String>> = BTreeMap::new();
+        let mut resolved: HashMap<(usize, usize), (Cpu, String)> = HashMap::new();
+        for (ci, c) in cmds.iter().enumerate() {
+            let State::Stage(stage) = c.state else { continue };
+            for (qi, q) in c.syms.iter().enumerate() {
+                match builds.resolve_sym(q, &texts)? {
+                    Ok((cpu, sym)) => {
+                        if !builds.table(cpu, stage)?.contains(&sym) {
+                            missing.entry(cpu).or_default().insert(sym.clone());
+                        }
+                        resolved.insert((ci, qi), (cpu, sym));
+                    }
+                    Err(e) => errors.push(format!("{}:{}: {e}", sources[c.source].rel, c.line + 1)),
+                }
+            }
+        }
+        if !missing.is_empty() && errors.is_empty() {
+            if opts.auto_keep && !retry {
+                let added = extend_keep_lists(rsdec, &sources, &missing)?;
+                println!("keep list: added {added} symbol(s) the linker had removed; running again");
+                return pipeline(rsdec, corpus_root, mode, opts, true);
+            }
+            for (cpu, syms) in &missing {
+                for sym in syms {
+                    errors.push(if opts.auto_keep {
+                        format!("'{sym}' is still not in the {} ELF after adding it to the keep list", cpu.label())
+                    } else {
+                        format!(
+                            "'{sym}' is not in the {} ELF (removed by --gc-sections); rerun without --no-auto-keep or add it with keep-symbols-list",
+                            cpu.label()
+                        )
+                    });
+                }
+            }
+        }
+        if !errors.is_empty() {
+            bail!("{}", errors.join("\n"));
+        }
         let mut blocks: Vec<BTreeMap<usize, Vec<String>>> = vec![BTreeMap::new(); sources.len()];
-        for c in &cmds {
+        for (ci, c) in cmds.iter().enumerate() {
             let State::Stage(stage) = c.state else { continue };
             if c.units.is_empty() && c.syms.is_empty() {
                 continue;
@@ -1678,14 +1765,8 @@ fn pipeline(rsdec: &Path, corpus_root: &Path, mode: Mode, opts: Options) -> Resu
                 }
             }
             let mut right = Vec::new();
-            for q in &c.syms {
-                let (cpu, sym) = match builds.resolve_sym(q)? {
-                    Ok(x) => x,
-                    Err(e) => {
-                        errors.push(format!("{at}: {e}"));
-                        continue;
-                    }
-                };
+            for qi in 0..c.syms.len() {
+                let (cpu, sym) = resolved[&(ci, qi)].clone();
                 let elf = builds.elf(cpu, stage)?;
                 right.push(format!("== {}/{sym} ({})", cpu.label(), cpu.feature(stage).unwrap_or("default")));
                 match disassemble(&elf, &sym, opts.labels) {
@@ -1771,6 +1852,149 @@ fn pipeline(rsdec: &Path, corpus_root: &Path, mode: Mode, opts: Options) -> Resu
             if COMMAND.is_match(text) {
                 lint_text(&s.rel, text);
             }
+        }
+    }
+    Ok(())
+}
+
+struct KeepEdits {
+    texts: Vec<(PathBuf, String)>,
+    by_path: HashMap<PathBuf, String>,
+    rewritten: HashMap<PathBuf, String>,
+}
+
+impl KeepEdits {
+    fn new(texts: Vec<(PathBuf, String)>) -> KeepEdits {
+        let by_path = texts.iter().cloned().collect();
+        KeepEdits { texts, by_path, rewritten: HashMap::new() }
+    }
+
+    fn current(&self, path: &Path) -> &str {
+        self.rewritten.get(path).unwrap_or(&self.by_path[path])
+    }
+
+    fn update(&mut self, bin: &keep::Binary, f: impl FnOnce(BTreeSet<keep::Entry>) -> Option<BTreeSet<keep::Entry>>) -> Result<()> {
+        let path = bin.require_keep_list(&self.texts)?;
+        let text = self.current(&path);
+        let new = keep::render(text, bin.cpu, f(keep::read(text)).as_ref());
+        self.rewritten.insert(path, new);
+        Ok(())
+    }
+
+    fn resolve_into(index: &keep::Index, symbol: &str, entries: &mut BTreeSet<keep::Entry>) -> Result<usize, String> {
+        let resolved = index.resolve(symbol)?;
+        if let Some(w) = resolved.warning {
+            warn(&w);
+        }
+        Ok(resolved.entries.into_iter().map(|e| usize::from(entries.insert(e))).sum())
+    }
+}
+
+fn extend_keep_lists(rsdec: &Path, sources: &[Source], missing: &BTreeMap<Cpu, BTreeSet<String>>) -> Result<usize> {
+    let mut edits = KeepEdits::new(sources.iter().map(|s| (s.path.clone(), s.stripped.clone())).collect());
+    let mut added = 0;
+    let mut errors = Vec::new();
+    for (cpu, syms) in missing {
+        let bin = keep::Binary::load(rsdec, *cpu)?;
+        let index = bin.index(&edits.by_path)?;
+        edits.update(&bin, |mut entries| {
+            for sym in syms {
+                match KeepEdits::resolve_into(&index, sym, &mut entries) {
+                    Ok(n) => added += n,
+                    Err(e) => errors.push(format!("{}: {e}", cpu.label())),
+                }
+            }
+            Some(entries)
+        })?;
+    }
+    if !errors.is_empty() {
+        bail!("cannot keep symbols the comparisons need:\n{}", errors.join("\n"));
+    }
+    for s in sources {
+        let new = match edits.rewritten.get(&s.path) {
+            Some(t) => t,
+            None if s.stubbed => &s.stripped,
+            None => continue,
+        };
+        if *new != s.original {
+            write_if_unchanged(&s.path, &s.rel, &s.original, new)?;
+        }
+    }
+    Ok(added)
+}
+
+fn keep_cmd(rsdec: &Path, requested: &[String], remove: bool) -> Result<()> {
+    ensure!(!remove || requested.is_empty(), "--remove takes no symbols");
+    let mut texts = Vec::new();
+    for path in source_files(rsdec)? {
+        let text = fs::read_to_string(&path)?;
+        texts.push((path, text));
+    }
+    let mut edits = KeepEdits::new(texts);
+    let bins: BTreeMap<Cpu, keep::Binary> = Cpu::ALL.into_iter().map(|c| Ok((c, keep::Binary::load(rsdec, c)?))).collect::<Result<_>>()?;
+    let all = requested.is_empty();
+    let mut per_cpu: BTreeMap<Cpu, BTreeSet<keep::Entry>> = BTreeMap::new();
+    if !remove {
+        let mut errors = Vec::new();
+        let queries: BTreeSet<String> = if all {
+            edits
+                .texts
+                .iter()
+                .flat_map(|(path, text)| {
+                    let stripped = strip_blocks(text).unwrap_or_else(|_| text.clone());
+                    parse_commands(&rel_str(rsdec, path), &stripped, &mut errors).into_iter().flat_map(|c| c.syms)
+                })
+                .collect()
+        } else {
+            requested.iter().cloned().collect()
+        };
+        let indexes: BTreeMap<Cpu, keep::Index> = bins.iter().map(|(c, b)| Ok((*c, b.index(&edits.by_path)?))).collect::<Result<_>>()?;
+        for q in &queries {
+            let targets: Vec<(Cpu, &str)> = match Cpu::from_label(q) {
+                Some((cpu, rest)) => vec![(cpu, rest)],
+                None => indexes.iter().filter(|(_, ix)| ix.resolves(q)).map(|(cpu, _)| (*cpu, q.as_str())).collect(),
+            };
+            match targets.as_slice() {
+                [(cpu, sym)] => {
+                    if let Err(e) = KeepEdits::resolve_into(&indexes[cpu], sym, per_cpu.entry(*cpu).or_default()) {
+                        errors.push(e);
+                    }
+                }
+                [] => {
+                    let why: Vec<String> =
+                        indexes.iter().map(|(cpu, ix)| format!("{}: {}", cpu.label(), ix.resolve(q).err().unwrap_or_default())).collect();
+                    errors.push(format!("'{q}' cannot be kept ({})", why.join(" | ")));
+                }
+                _ => errors.push(format!("'{q}' exists for both CPUs; qualify it as arm7_bin/{q} or arm9_bin/{q}")),
+            }
+        }
+        if !errors.is_empty() {
+            bail!("{}", errors.join("\n"));
+        }
+    }
+    for (cpu, bin) in &bins {
+        let entries = per_cpu.remove(cpu).unwrap_or_default();
+        if !remove && !all && entries.is_empty() {
+            continue;
+        }
+        if (remove || all) && bin.keep_list_file(&edits.texts)?.is_none() {
+            if !remove && !entries.is_empty() {
+                warn(&format!("{} has no {} directive; its {} entry(ies) were not listed", cpu.label(), keep::DIRECTIVE, entries.len()));
+            }
+            continue;
+        }
+        let count = entries.len();
+        edits.update(bin, |_| (!remove).then_some(entries))?;
+        if remove {
+            println!("keep list for {}: removed", cpu.label());
+        } else {
+            println!("keep list for {}: {count} entry(ies)", cpu.label());
+        }
+    }
+    for (path, new) in &edits.rewritten {
+        let original = &edits.by_path[path];
+        if new != original {
+            write_if_unchanged(path, &rel_str(rsdec, path), original, new)?;
         }
     }
     Ok(())
