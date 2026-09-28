@@ -6,7 +6,13 @@
   "main": "./extension.js",
   "activationEvents": ["onLanguage:rust"],
   "contributes": {
-    "commands": [{ "command": "snowOutline.pick", "title": "Snow Outline: Go to Line" }],
-    "keybindings": [{ "command": "snowOutline.pick", "key": "alt+1", "when": "editorTextFocus && editorLangId == rust" }]
+    "commands": [
+      { "command": "snowOutline.pick", "title": "Snow Outline: Go to Line" },
+      { "command": "snowOutline.define", "title": "Snow Outline: Go to Definition of Selection" }
+    ],
+    "keybindings": [
+      { "command": "snowOutline.pick", "key": "alt+q", "when": "editorTextFocus && editorLangId == rust" },
+      { "command": "snowOutline.define", "key": "alt+1", "when": "editorTextFocus && editorLangId == rust" }
+    ]
   }
 }

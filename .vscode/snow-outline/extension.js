@@ -130,10 +130,33 @@ function pick() {
   qp.show();
 }
 
+async function define() {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) return;
+  const doc = editor.document;
+  const range = editor.selection.isEmpty ? doc.getWordRangeAtPosition(editor.selection.active) : editor.selection;
+  const name = range && doc.getText(range).trim().split(/[/:]+/).pop();
+  if (!name) return;
+  const find = d => scan(d).filter(e => e.kind !== 'section' && e.name === name);
+  const here = find(doc);
+  if (here.length) {
+    const line = editor.selection.active.line;
+    return go(editor, (here.find(e => e.line > line) ?? here[0]).line);
+  }
+  for (const uri of await vscode.workspace.findFiles('**/*.rs', '**/{target,asm-corpus}/**')) {
+    if (uri.toString() === doc.uri.toString()) continue;
+    const other = await vscode.workspace.openTextDocument(uri);
+    const [hit] = find(other);
+    if (hit) return go(await vscode.window.showTextDocument(other), hit.line);
+  }
+  vscode.commands.executeCommand('editor.action.revealDefinition');
+}
+
 exports.activate = context => {
   context.subscriptions.push(
     vscode.languages.registerCompletionItemProvider({ language: 'rust' }, completions, '1'),
     vscode.commands.registerCommand('snowOutline.jump', jump),
     vscode.commands.registerCommand('snowOutline.pick', pick),
+    vscode.commands.registerCommand('snowOutline.define', define),
   );
 };
