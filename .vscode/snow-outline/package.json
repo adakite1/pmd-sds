@@ -1,0 +1,12 @@
+{
+  "name": "snow-outline",
+  "publisher": "local",
+  "version": "0.0.1",
+  "engines": { "vscode": "^1.80.0" },
+  "main": "./extension.js",
+  "activationEvents": ["onLanguage:rust"],
+  "contributes": {
+    "commands": [{ "command": "snowOutline.pick", "title": "Snow Outline: Go to Line" }],
+    "keybindings": [{ "command": "snowOutline.pick", "key": "alt+1", "when": "editorTextFocus && editorLangId == rust" }]
+  }
+}
