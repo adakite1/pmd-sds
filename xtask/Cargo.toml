@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 object = "0.40"
+gimli = { version = "0.34", default-features = false, features = ["read-all"] }
 ds-rom = "0.8"
 anyhow = "1.0"
 serde = { version = "1", features = ["derive"] }

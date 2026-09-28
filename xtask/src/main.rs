@@ -5,6 +5,7 @@ use object::{Endianness, Object, ObjectSegment, elf::{FileHeader32, PT_LOAD}, re
 
 mod corpus;
 mod corpus_gen;
+mod corpus_inline;
 mod corpus_keep;
 mod corpus_layout;
 

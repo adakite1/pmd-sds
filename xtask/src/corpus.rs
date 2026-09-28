@@ -10,6 +10,7 @@ use regex::Regex;
 use serde::Deserialize;
 
 use crate::corpus_gen;
+use crate::corpus_inline as inline;
 use crate::corpus_keep as keep;
 use crate::corpus_layout as layout;
 
@@ -53,14 +54,14 @@ const USAGE: &str = "usage: cargo xtask corpus [run|stub|lint|fix|keep-symbols-l
 static COMMAND: LazyLock<Regex> = LazyLock::new(|| {
     let list = r"(\[[^\]]*\]|[^,\s\)\]]+)";
     Regex::new(&format!(
-        r"/\*\(asm-corpus-filename:\s*{list}\s*,\s*objdump-symbol-name:\s*{list}\s*\)(DONE\(\s*'([^']*)'\s*((?:,\s*[A-Za-z]+\s*)*)\))?\*/"
+        r"/\*\(asm-corpus-filename:\s*{list}\s*,\s*objdump-symbol-name:\s*(.*?)\s*\)(DONE\(\s*'([^']*)'\s*((?:,\s*[A-Za-z]+\s*)*)\))?\*/"
     ))
     .unwrap()
 });
 
 static STUB: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"/\*\(stub\s+text:\s*([^)\s]+)\s*\)\*/").unwrap());
 static LINK_SECTION: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"link_section\s*=\s*"([^"]+)""#).unwrap());
-static INSN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(\s*[0-9a-f]+:)\t([0-9a-f ]+)\t(.*)$").unwrap());
+static INSN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^([\s>]*[0-9a-f]+:)\t([0-9a-f ]+)\t(.*)$").unwrap());
 static LABEL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[0-9a-f]+ <[^>]+>:$").unwrap());
 static WORD_LOAD: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\tldr(?:eq|ne|cs|hs|cc|lo|mi|pl|vs|vc|hi|ls|ge|lt|gt|le|al)?\t[a-z0-9]+, \[pc, #-?\d+\]\t@ \(?([0-9a-f]+)")
@@ -89,6 +90,13 @@ impl Cpu {
         Cpu::ALL.into_iter().find(|c| path.starts_with(rsdec.join(c.dir())))
     }
 
+    pub(crate) fn split(s: &str) -> (Option<Cpu>, &str) {
+        match Cpu::from_label(s) {
+            Some((cpu, rest)) => (Some(cpu), rest),
+            None => (None, s),
+        }
+    }
+
     fn from_label(s: &str) -> Option<(Cpu, &str)> {
         Cpu::ALL.into_iter().find_map(|cpu| {
             [format!("{}/", cpu.label()), format!("{}/", cpu.label().replace('_', "-"))]
@@ -105,7 +113,7 @@ impl Cpu {
         }
     }
 
-    fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
             Cpu::Arm7 => "arm7_bin",
             Cpu::Arm9 => "arm9_bin",
@@ -193,11 +201,26 @@ struct Source {
     commands: Vec<RawCommand>,
 }
 
+#[derive(Clone)]
+enum SymSpec {
+    Plain(String),
+    Inline(inline::InlineSpec),
+}
+
+impl SymSpec {
+    fn keep_queries(&self) -> Vec<String> {
+        match self {
+            SymSpec::Plain(s) => vec![s.clone()],
+            SymSpec::Inline(spec) => spec.callers().map(|c| spec.caller_query(c)).collect(),
+        }
+    }
+}
+
 struct RawCommand {
     line: usize,
     indent: String,
     units: Vec<String>,
-    syms: Vec<String>,
+    syms: Vec<SymSpec>,
     done: Option<(String, BTreeSet<String>)>,
 }
 
@@ -206,7 +229,7 @@ struct Cmd {
     line: usize,
     indent: String,
     units: Vec<usize>,
-    syms: Vec<String>,
+    syms: Vec<SymSpec>,
     done: Option<(String, BTreeSet<String>)>,
     state: State,
 }
@@ -542,6 +565,46 @@ fn parse_list(s: &str) -> Vec<String> {
     items.into_iter().filter(|i| !i.is_empty() && *i != "none").map(String::from).collect()
 }
 
+pub(crate) fn split_top(s: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let (mut depth, mut start) = (0i32, 0);
+    for (i, ch) in s.char_indices() {
+        match ch {
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth -= 1,
+            ',' if depth == 0 => {
+                out.push(s[start..i].trim());
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    out.push(s[start..].trim());
+    out
+}
+
+fn parse_syms(s: &str) -> Result<Vec<SymSpec>, String> {
+    let s = s.trim();
+    let items = match s.strip_prefix('[').and_then(|r| r.strip_suffix(']')) {
+        Some(inner) if split_top(s).len() == 1 => split_top(inner),
+        _ => split_top(s),
+    };
+    if items.len() > 1 && !s.starts_with('[') {
+        return Err(format!("'{s}': write multiple symbols as a [...] list"));
+    }
+    let mut out = Vec::new();
+    for item in items.into_iter().filter(|i| !i.is_empty() && *i != "none") {
+        if let Some(inner) = item.strip_prefix("inline(").and_then(|r| r.strip_suffix(')')) {
+            out.push(SymSpec::Inline(inline::InlineSpec::parse(inner)?));
+        } else if item.contains(|c: char| c.is_whitespace() || "()[],".contains(c)) {
+            return Err(format!("'{item}' is not a symbol name"));
+        } else {
+            out.push(SymSpec::Plain(item.to_string()));
+        }
+    }
+    Ok(out)
+}
+
 fn parse_commands(rel: &str, text: &str, errors: &mut Vec<String>) -> Vec<RawCommand> {
     let mut starts = HashSet::new();
     let mut out = Vec::new();
@@ -578,7 +641,10 @@ fn parse_commands(rel: &str, text: &str, errors: &mut Vec<String>) -> Vec<RawCom
             line: line_of(text, m.end() - 1),
             indent,
             units: parse_list(&c[1]),
-            syms: parse_list(&c[2]),
+            syms: parse_syms(&c[2]).unwrap_or_else(|e| {
+                errors.push(format!("{rel}:{}: {e}", start_line + 1));
+                Vec::new()
+            }),
             done,
         });
     }
@@ -1048,13 +1114,11 @@ fn code_labels(file: &object::File) -> Vec<(u64, String, String)> {
     out
 }
 
-fn insert_labels(lines: Vec<String>, labels: &[(u64, String, String)], start: u64, end: u64, mode: Labels) -> Vec<String> {
-    let mut pending: Vec<&(u64, String, String)> =
-        labels.iter().filter(|(a, _, _)| (start..=end).contains(a)).collect();
-    let tag = |(_, id, comment): &(u64, String, String)| format!("{MARK_TAG}{id}\t{comment}");
+fn insert_labels(lines: Vec<String>, mut pending: Vec<(u64, String, String)>, mode: Labels) -> Vec<String> {
+    let tag = |(_, id, comment): (u64, String, String)| format!("{MARK_TAG}{id}\t{comment}");
     let mut out = Vec::new();
     for line in lines {
-        let addr = INSN.captures(&line).and_then(|c| u64::from_str_radix(c[1].trim().trim_end_matches(':'), 16).ok());
+        let addr = insn_addr(&line);
         let here: Vec<String> = match addr {
             Some(a) => {
                 let (hit, rest): (Vec<_>, Vec<_>) = pending.into_iter().partition(|(la, _, _)| *la == a);
@@ -1078,24 +1142,49 @@ fn insert_labels(lines: Vec<String>, labels: &[(u64, String, String)], start: u6
 fn disassemble(elf: &Path, sym: &str, labels: Labels) -> Result<Vec<String>> {
     let data = fs::read(elf)?;
     let file = object::File::parse(&*data)?;
-    let symbol = file
-        .symbols()
-        .find(|s| s.is_definition() && s.name() == Ok(sym))
-        .with_context(|| {
-            format!(
-                "symbol '{sym}' not found in {} (a function nothing calls yet is removed by --gc-sections)",
-                elf.display()
-            )
-        })?;
-    ensure!(symbol.size() > 0, "symbol '{sym}' has size 0 in {}", elf.display());
-    let start = symbol.address() & !1;
-    let end = start + symbol.size();
-    let mut lines = objdump_range(elf, start, end)?;
+    let range = symbol_range(&file, sym).with_context(|| {
+        format!(
+            "symbol '{sym}' not found (or has size 0) in {} (a function nothing calls yet is removed by --gc-sections)",
+            elf.display()
+        )
+    })?;
+    disassemble_ranges(elf, &file, &[range], labels, &[])
+}
+
+fn symbol_range(file: &object::File, sym: &str) -> Option<(u64, u64)> {
+    let s = file.symbols().find(|s| s.is_definition() && s.name() == Ok(sym))?;
+    let start = s.address() & !1;
+    (s.size() > 0).then_some((start, start + s.size()))
+}
+
+fn in_ranges(ranges: &[(u64, u64)], addr: u64) -> bool {
+    ranges.iter().any(|(lo, hi)| (*lo..*hi).contains(&addr))
+}
+
+fn insn_addr(line: &str) -> Option<u64> {
+    INSN.captures(line).and_then(|c| u64::from_str_radix(c[1].trim().trim_start_matches('>').trim_end_matches(':'), 16).ok())
+}
+
+fn disassemble_ranges(
+    elf: &Path,
+    file: &object::File,
+    ranges: &[(u64, u64)],
+    labels: Labels,
+    marks: &[(u64, u64)],
+) -> Result<Vec<String>> {
+    let mut lines = Vec::new();
+    for (i, &(lo, hi)) in ranges.iter().enumerate() {
+        if i > 0 {
+            lines.push("...".to_string());
+        }
+        lines.extend(objdump_range(elf, lo, hi)?);
+    }
+    let end = ranges.last().map_or(0, |r| r.1);
     let targets: BTreeSet<u64> = lines
         .iter()
         .filter_map(|l| POOL_REF.captures(l))
         .filter_map(|c| u64::from_str_radix(&c[1], 16).ok())
-        .filter(|t| *t < start || *t >= end)
+        .filter(|t| !in_ranges(ranges, *t))
         .collect();
     let mut runs: Vec<(u64, u64)> = Vec::new();
     for t in targets {
@@ -1145,10 +1234,159 @@ fn disassemble(elf: &Path, sym: &str, labels: Labels) -> Result<Vec<String>> {
             None => format!("{value:#010x}"),
         })
     });
-    Ok(match labels {
+    let lines = match labels {
         Labels::Hide => lines,
-        mode => insert_labels(lines, &code_labels(&file), start, end, mode),
-    })
+        mode => {
+            let inside = code_labels(file).into_iter().filter(|(a, _, _)| ranges.iter().any(|(lo, hi)| (*lo..=*hi).contains(a)));
+            insert_labels(lines, inside.collect(), mode)
+        }
+    };
+    Ok(lines
+        .into_iter()
+        .map(|line| match insn_addr(&line) {
+            Some(a) if in_ranges(marks, a) => match line.strip_prefix(' ') {
+                Some(rest) => format!(">{rest}"),
+                None => format!(">{line}"),
+            },
+            _ => line,
+        })
+        .collect())
+}
+
+type DwarfCache = HashMap<(Cpu, Option<&'static str>), inline::Info>;
+
+fn inline_lines(
+    builds: &mut Builds,
+    dwarf: &mut DwarfCache,
+    spec: &inline::InlineSpec,
+    stage: &str,
+    labels: Labels,
+    at: &str,
+    warnings: &mut Vec<String>,
+) -> Result<Vec<String>> {
+    let name = Cpu::split(&spec.target).1;
+    let candidates = spec.cpu_hint().map_or(Cpu::ALL.to_vec(), |cpu| vec![cpu]);
+    for &cpu in &candidates {
+        if let std::collections::hash_map::Entry::Vacant(v) = dwarf.entry((cpu, cpu.feature(stage))) {
+            let elf = builds.elf(cpu, stage)?;
+            v.insert(inline::Info::load(&fs::read(&elf)?).with_context(|| elf.display().to_string())?);
+        }
+    }
+    let head = |cpu: Cpu| format!("== {}/{name} ({}), INLINE", cpu.label(), cpu.feature(stage).unwrap_or("default"));
+    let mut found = Vec::new();
+    for &cpu in &candidates {
+        if let Some(target) = dwarf[&(cpu, cpu.feature(stage))].find(name).map_err(|e| anyhow::anyhow!("{}: {e}", cpu.label()))? {
+            found.push((cpu, head(cpu), target));
+        }
+    }
+    match found.as_slice() {
+        [] => {
+            let (head, place) = match candidates.as_slice() {
+                [cpu] => (head(*cpu), cpu.label()),
+                _ => (format!("== {name}, INLINE"), "arm7_bin or arm9_bin"),
+            };
+            warnings.push(format!("{at}: '{name}' is not inlined anywhere in {place}"));
+            Ok(vec![head, format!("-- not inlined anywhere in {place}: nothing linked calls it yet, or the name is misspelled")])
+        }
+        [(cpu, head, target)] => {
+            let elf = builds.elf(*cpu, stage)?;
+            let data = fs::read(&elf)?;
+            let file = object::File::parse(&*data)?;
+            let mut view = InlineView { elf: &elf, file: &file, head, labels, at, target, out: Vec::new(), warnings };
+            for (text, sel) in &spec.selectors {
+                for pick in target.select(sel) {
+                    view.render(pick, text)?;
+                }
+            }
+            Ok(view.out)
+        }
+        _ => bail!("'{name}' is inlined in both binaries; qualify as inline(=arm7_bin/{name}) or inline(=arm9_bin/{name})"),
+    }
+}
+
+struct InlineView<'a> {
+    elf: &'a Path,
+    file: &'a object::File<'a>,
+    head: &'a str,
+    labels: Labels,
+    at: &'a str,
+    target: &'a inline::Target<'a>,
+    out: Vec<String>,
+    warnings: &'a mut Vec<String>,
+}
+
+impl InlineView<'_> {
+    fn header(&mut self, k: usize) {
+        let t = self.target;
+        let hit = &t.instances[k];
+        let sym = &t.symbols[hit.sym];
+        let site = hit.inst.call.as_ref().map_or("?".to_string(), ToString::to_string);
+        let base = format!("{} ({} of {}) in ", self.head, k + 1, t.instances.len());
+        let place = format!(
+            "{} [sym {} of {}] ({} / {}) at {site}",
+            inline::demangled(&sym.name),
+            hit.sym + 1,
+            t.symbols.len(),
+            hit.j + 1,
+            sym.instances.len()
+        );
+        let inside = symbol_range(self.file, &sym.name)
+            .is_some_and(|(lo, hi)| hit.inst.ranges.iter().all(|(a, b)| *a >= lo && *b <= hi));
+        if inside {
+            self.out.push(format!("{base}{place}"));
+        } else {
+            self.warnings.push(format!(
+                "{}: instance {} of '{}' is not inside the ELF symbol '{}'",
+                self.at,
+                k + 1,
+                t.name,
+                inline::demangled(&sym.name)
+            ));
+            self.out.push(format!("{base}**{place}** WARN: Symbol name provided does not inline this"));
+        }
+    }
+
+    fn disassemble(&mut self, ranges: &[(u64, u64)], marks: &[(u64, u64)]) -> Result<()> {
+        self.out.extend(disassemble_ranges(self.elf, self.file, ranges, self.labels, marks)?);
+        Ok(())
+    }
+
+    fn render(&mut self, pick: inline::Pick, text: &str) -> Result<()> {
+        let t = self.target;
+        match pick {
+            inline::Pick::Instance(k) => {
+                self.header(k);
+                self.disassemble(&t.instances[k].inst.ranges, &[])?;
+            }
+            inline::Pick::Whole(i) => {
+                let sym = &t.symbols[i];
+                for &k in &sym.instances {
+                    self.header(k);
+                }
+                let marks: Vec<(u64, u64)> = sym.instances.iter().flat_map(|&k| t.instances[k].inst.ranges.iter().copied()).collect();
+                match symbol_range(self.file, &sym.name) {
+                    Some(range) => self.disassemble(&[range], &marks)?,
+                    None => {
+                        self.out.push(format!("-- '{}' is not an ELF symbol; showing the inlined ranges only", inline::demangled(&sym.name)));
+                        self.disassemble(&marks, &[])?;
+                    }
+                }
+            }
+            inline::Pick::Absent { whole } => {
+                let sel = Cpu::split(text).1;
+                self.out.push(format!("{} in **{sel}** WARN: Symbol name provided does not inline this", self.head));
+                self.warnings.push(format!("{}: '{sel}' does not inline '{}' (it is inlined in: {})", self.at, t.name, t.symbol_list()));
+                if whole && let Some(range) = symbol_range(self.file, sel) {
+                    self.disassemble(&[range], &[])?;
+                }
+            }
+            inline::Pick::Nothing(why) => {
+                self.out.push(format!("-- {text}: selects nothing; {why}"));
+                self.warnings.push(format!("{}: {text} selects nothing ({why})", self.at));
+            }
+        }
+        Ok(())
+    }
 }
 
 fn render_label(line: &str, pad: usize, width: usize, label_first: bool) -> Option<Vec<String>> {
@@ -1683,6 +1921,7 @@ fn pipeline(rsdec: &Path, corpus_root: &Path, mode: Mode, opts: Options, retry: 
 
     let mut new_texts: Vec<String> = sources.iter().map(|s| s.original.clone()).collect();
     let mut block_count = 0;
+    let mut inline_warnings: Vec<String> = Vec::new();
     if mode == Mode::Run {
         let mut builds = Builds { rsdec: rsdec.to_path_buf(), indexes: HashMap::new(), elves: HashMap::new(), tables: HashMap::new() };
         let texts: HashMap<PathBuf, String> = sources.iter().map(|s| (s.path.clone(), s.stripped.clone())).collect();
@@ -1703,15 +1942,19 @@ fn pipeline(rsdec: &Path, corpus_root: &Path, mode: Mode, opts: Options, retry: 
         let mut resolved: HashMap<(usize, usize), (Cpu, String)> = HashMap::new();
         for (ci, c) in cmds.iter().enumerate() {
             let State::Stage(stage) = c.state else { continue };
-            for (qi, q) in c.syms.iter().enumerate() {
-                match builds.resolve_sym(q, &texts)? {
-                    Ok((cpu, sym)) => {
-                        if !builds.table(cpu, stage)?.contains(&sym) {
-                            missing.entry(cpu).or_default().insert(sym.clone());
+            for (qi, spec) in c.syms.iter().enumerate() {
+                for q in spec.keep_queries() {
+                    match builds.resolve_sym(&q, &texts)? {
+                        Ok((cpu, sym)) => {
+                            if !builds.table(cpu, stage)?.contains(&sym) {
+                                missing.entry(cpu).or_default().insert(sym.clone());
+                            }
+                            if let SymSpec::Plain(_) = spec {
+                                resolved.insert((ci, qi), (cpu, sym));
+                            }
                         }
-                        resolved.insert((ci, qi), (cpu, sym));
+                        Err(e) => errors.push(format!("{}:{}: {e}", sources[c.source].rel, c.line + 1)),
                     }
-                    Err(e) => errors.push(format!("{}:{}: {e}", sources[c.source].rel, c.line + 1)),
                 }
             }
         }
@@ -1738,6 +1981,7 @@ fn pipeline(rsdec: &Path, corpus_root: &Path, mode: Mode, opts: Options, retry: 
             bail!("{}", errors.join("\n"));
         }
         let mut blocks: Vec<BTreeMap<usize, Vec<String>>> = vec![BTreeMap::new(); sources.len()];
+        let mut dwarf: HashMap<(Cpu, Option<&'static str>), inline::Info> = HashMap::new();
         for (ci, c) in cmds.iter().enumerate() {
             let State::Stage(stage) = c.state else { continue };
             if c.units.is_empty() && c.syms.is_empty() {
@@ -1765,11 +2009,16 @@ fn pipeline(rsdec: &Path, corpus_root: &Path, mode: Mode, opts: Options, retry: 
                 }
             }
             let mut right = Vec::new();
-            for qi in 0..c.syms.len() {
-                let (cpu, sym) = resolved[&(ci, qi)].clone();
-                let elf = builds.elf(cpu, stage)?;
-                right.push(format!("== {}/{sym} ({})", cpu.label(), cpu.feature(stage).unwrap_or("default")));
-                match disassemble(&elf, &sym, opts.labels) {
+            for (qi, spec) in c.syms.iter().enumerate() {
+                let lines = match spec {
+                    SymSpec::Plain(_) => {
+                        let (cpu, sym) = &resolved[&(ci, qi)];
+                        right.push(format!("== {}/{sym} ({})", cpu.label(), cpu.feature(stage).unwrap_or("default")));
+                        disassemble(&builds.elf(*cpu, stage)?, sym, opts.labels)
+                    }
+                    SymSpec::Inline(spec) => inline_lines(&mut builds, &mut dwarf, spec, stage, opts.labels, &at, &mut inline_warnings),
+                };
+                match lines {
                     Ok(lines) => right.extend(lines),
                     Err(e) => errors.push(format!("{at}: {e}")),
                 }
@@ -1844,7 +2093,7 @@ fn pipeline(rsdec: &Path, corpus_root: &Path, mode: Mode, opts: Options, retry: 
         "commands: {} ({complete} complete), stubs: {stubs_written}, blocks: {block_count}, files rewritten: {rewritten}, corpus moves: {moved}, duplicates removed: {removed}",
         cmds.len()
     );
-    for w in &stub_warnings {
+    for w in stub_warnings.iter().chain(&inline_warnings) {
         warn(w);
     }
     if mode == Mode::Run {
@@ -1942,7 +2191,7 @@ fn keep_cmd(rsdec: &Path, requested: &[String], remove: bool) -> Result<()> {
                 .iter()
                 .flat_map(|(path, text)| {
                     let stripped = strip_blocks(text).unwrap_or_else(|_| text.clone());
-                    parse_commands(&rel_str(rsdec, path), &stripped, &mut errors).into_iter().flat_map(|c| c.syms)
+                    parse_commands(&rel_str(rsdec, path), &stripped, &mut errors).into_iter().flat_map(|c| c.syms).flat_map(|s| s.keep_queries())
                 })
                 .collect()
         } else {
