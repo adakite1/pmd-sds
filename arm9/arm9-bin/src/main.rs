@@ -535,7 +535,7 @@ fn init_banked_stacks() {
     // Note: No, I will not use naked asm or global asm. This works, nothing spills to stack.
 }
 
-/*(asm-corpus-filename: INITi_CpuClear32, objdump-symbol-name: none)DONE('crt0')*/
+/*(asm-corpus-filename: INITi_CpuClear32, objdump-symbol-name: inline(=arm9_bin/fill_volatile, all~~4))DONE('crt0')*/
 #[inline(always)]
 fn fill_volatile(value: u32, mut dst: *mut u32, mut size: usize) -> *mut u32 {
     debug_assert_eq!(size % core::mem::size_of::<u32>(), 0);

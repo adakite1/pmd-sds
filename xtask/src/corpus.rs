@@ -1148,7 +1148,7 @@ fn disassemble(elf: &Path, sym: &str, labels: Labels) -> Result<Vec<String>> {
             elf.display()
         )
     })?;
-    disassemble_ranges(elf, &file, &[range], labels, &[])
+    disassemble_ranges(elf, &file, &[range], labels, &[], Some(range.1))
 }
 
 fn symbol_range(file: &object::File, sym: &str) -> Option<(u64, u64)> {
@@ -1171,6 +1171,7 @@ fn disassemble_ranges(
     ranges: &[(u64, u64)],
     labels: Labels,
     marks: &[(u64, u64)],
+    labels_end: Option<u64>,
 ) -> Result<Vec<String>> {
     let mut lines = Vec::new();
     for (i, &(lo, hi)) in ranges.iter().enumerate() {
@@ -1237,7 +1238,7 @@ fn disassemble_ranges(
     let lines = match labels {
         Labels::Hide => lines,
         mode => {
-            let inside = code_labels(file).into_iter().filter(|(a, _, _)| ranges.iter().any(|(lo, hi)| (*lo..=*hi).contains(a)));
+            let inside = code_labels(file).into_iter().filter(|(a, _, _)| in_ranges(ranges, *a) || labels_end == Some(*a));
             insert_labels(lines, inside.collect(), mode)
         }
     };
@@ -1293,9 +1294,9 @@ fn inline_lines(
             let data = fs::read(&elf)?;
             let file = object::File::parse(&*data)?;
             let mut view = InlineView { elf: &elf, file: &file, head, labels, at, target, out: Vec::new(), warnings };
-            for (text, sel) in &spec.selectors {
-                for pick in target.select(sel) {
-                    view.render(pick, text)?;
+            for item in &spec.items {
+                for pick in target.select(&item.selector) {
+                    view.render(pick, item)?;
                 }
             }
             Ok(view.out)
@@ -1323,10 +1324,10 @@ impl InlineView<'_> {
         let site = hit.inst.call.as_ref().map_or("?".to_string(), ToString::to_string);
         let base = format!("{} ({} of {}) in ", self.head, k + 1, t.instances.len());
         let place = format!(
-            "{} [sym {} of {}] ({} / {}) at {site}",
-            inline::demangled(&sym.name),
+            "[sym {} of {}] {} ({} / {}) at {site}",
             hit.sym + 1,
             t.symbols.len(),
+            inline::demangled(&sym.name),
             hit.j + 1,
             sym.instances.len()
         );
@@ -1346,17 +1347,56 @@ impl InlineView<'_> {
         }
     }
 
-    fn disassemble(&mut self, ranges: &[(u64, u64)], marks: &[(u64, u64)]) -> Result<()> {
-        self.out.extend(disassemble_ranges(self.elf, self.file, ranges, self.labels, marks)?);
+    fn disassemble(&mut self, ranges: &[(u64, u64)], marks: &[(u64, u64)], labels_end: Option<u64>) -> Result<()> {
+        self.out.extend(disassemble_ranges(self.elf, self.file, ranges, self.labels, marks, labels_end)?);
         Ok(())
     }
 
-    fn render(&mut self, pick: inline::Pick, text: &str) -> Result<()> {
+    fn windows(&self, symbol: (u64, u64), marks: &[(u64, u64)], context: inline::Context) -> Result<Vec<(u64, u64)>> {
+        let addrs: Vec<u64> = objdump_range(self.elf, symbol.0, symbol.1)?.iter().filter_map(|l| insn_addr(l)).collect();
+        let mut keep = vec![false; addrs.len()];
+        for (i, a) in addrs.iter().enumerate() {
+            if in_ranges(marks, *a) {
+                keep[i.saturating_sub(context.up)..=(i + context.down).min(addrs.len() - 1)].fill(true);
+            }
+        }
+        let mut out: Vec<(u64, u64)> = Vec::new();
+        for (i, a) in addrs.iter().enumerate().filter(|(i, _)| keep[*i]) {
+            let end = addrs.get(i + 1).copied().unwrap_or(symbol.1);
+            match out.last_mut() {
+                Some((_, hi)) if *hi == *a => *hi = end,
+                _ => out.push((*a, end)),
+            }
+        }
+        Ok(out)
+    }
+
+    fn marked(&mut self, symbol: Option<(u64, u64)>, marks: &[(u64, u64)], context: Option<inline::Context>) -> Result<()> {
+        match (symbol, context) {
+            (Some(range), Some(context)) => {
+                let windows = self.windows(range, marks, context)?;
+                let tail = windows.last().is_some_and(|w| w.1 == range.1);
+                self.disassemble(&windows, marks, tail.then_some(range.1))
+            }
+            (Some(range), None) => self.disassemble(&[range], marks, Some(range.1)),
+            (None, _) => self.disassemble(marks, &[], None),
+        }
+    }
+
+    fn render(&mut self, pick: inline::Pick, item: &inline::Item) -> Result<()> {
         let t = self.target;
+        let text = item.text.as_str();
+        if !self.out.is_empty() {
+            self.out.push(String::new());
+        }
         match pick {
             inline::Pick::Instance(k) => {
                 self.header(k);
-                self.disassemble(&t.instances[k].inst.ranges, &[])?;
+                let hit = &t.instances[k];
+                match item.context {
+                    Some(_) => self.marked(symbol_range(self.file, &t.symbols[hit.sym].name), &hit.inst.ranges, item.context)?,
+                    None => self.disassemble(&hit.inst.ranges, &[], None)?,
+                }
             }
             inline::Pick::Whole(i) => {
                 let sym = &t.symbols[i];
@@ -1364,20 +1404,21 @@ impl InlineView<'_> {
                     self.header(k);
                 }
                 let marks: Vec<(u64, u64)> = sym.instances.iter().flat_map(|&k| t.instances[k].inst.ranges.iter().copied()).collect();
-                match symbol_range(self.file, &sym.name) {
-                    Some(range) => self.disassemble(&[range], &marks)?,
-                    None => {
-                        self.out.push(format!("-- '{}' is not an ELF symbol; showing the inlined ranges only", inline::demangled(&sym.name)));
-                        self.disassemble(&marks, &[])?;
-                    }
+                let range = symbol_range(self.file, &sym.name);
+                if range.is_none() {
+                    self.out.push(format!("-- '{}' is not an ELF symbol; showing the inlined ranges only", inline::demangled(&sym.name)));
                 }
+                self.marked(range, &marks, item.context)?;
             }
             inline::Pick::Absent { whole } => {
                 let sel = Cpu::split(text).1;
                 self.out.push(format!("{} in **{sel}** WARN: Symbol name provided does not inline this", self.head));
                 self.warnings.push(format!("{}: '{sel}' does not inline '{}' (it is inlined in: {})", self.at, t.name, t.symbol_list()));
-                if whole && let Some(range) = symbol_range(self.file, sel) {
-                    self.disassemble(&[range], &[])?;
+                if whole
+                    && item.context.is_none()
+                    && let Some(range) = symbol_range(self.file, sel)
+                {
+                    self.disassemble(&[range], &[], Some(range.1))?;
                 }
             }
             inline::Pick::Nothing(why) => {
@@ -1992,6 +2033,9 @@ fn pipeline(rsdec: &Path, corpus_root: &Path, mode: Mode, opts: Options, retry: 
             for &u in &c.units {
                 let e = &lock[u];
                 let rec = &records[&u];
+                if !left.is_empty() {
+                    left.push(String::new());
+                }
                 left.push(format!("== {}", e.path.trim_end_matches(".json")));
                 left.push(format!("   {}", rec.source));
                 left.extend(rec.notes.iter().map(|n| format!("!! {n}")));
@@ -2010,6 +2054,9 @@ fn pipeline(rsdec: &Path, corpus_root: &Path, mode: Mode, opts: Options, retry: 
             }
             let mut right = Vec::new();
             for (qi, spec) in c.syms.iter().enumerate() {
+                if !right.is_empty() {
+                    right.push(String::new());
+                }
                 let lines = match spec {
                     SymSpec::Plain(_) => {
                         let (cpu, sym) = &resolved[&(ci, qi)];

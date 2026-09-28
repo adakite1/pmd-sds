@@ -1,17 +1,50 @@
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 use std::ops::Range;
+use std::sync::LazyLock;
 
-use anyhow::{Context, Result};
+use anyhow::{Context as _, Result};
 use gimli::{AttributeValue, EndianSlice, LittleEndian, SectionId};
 use object::{Object, ObjectSection, SectionKind};
+use regex::Regex;
 
 use crate::corpus::{Cpu, split_top};
 
 #[derive(Clone)]
 pub struct InlineSpec {
     pub target: String,
-    pub selectors: Vec<(String, Selector)>,
+    pub items: Vec<Item>,
+}
+
+#[derive(Clone)]
+pub struct Item {
+    pub text: String,
+    pub selector: Selector,
+    pub context: Option<Context>,
+}
+
+#[derive(Clone, Copy)]
+pub struct Context {
+    pub up: usize,
+    pub down: usize,
+}
+
+static CONTEXT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(.*?)(?:~~(\d+)|~(\d+)(?:\((\d+)\^\))?|\((\d+)\^\))$").unwrap());
+
+impl Context {
+    fn split(s: &str) -> Result<(&str, Option<Context>), String> {
+        let Some(c) = CONTEXT.captures(s) else { return Ok((s, None)) };
+        let num = |i: usize| -> Result<usize, String> {
+            c.get(i).map_or(Ok(0), |m| m.as_str().parse().map_err(|_| format!("'{s}': context line count too large")))
+        };
+        let context = match (c.get(2), c.get(3)) {
+            (Some(_), _) => Context { up: num(2)?, down: num(2)? },
+            (_, Some(_)) => Context { up: num(4)?, down: num(3)? },
+            _ => Context { up: num(5)?, down: 0 },
+        };
+        Ok((c.get(1).unwrap().as_str().trim(), Some(context)))
+    }
 }
 
 #[derive(Clone)]
@@ -78,13 +111,13 @@ impl Selector {
                 [i, j] => Selector::All(Span::parse(i)?, Some(Span::parse(j)?)),
                 _ => return Err(format!("'{s}': all[...] takes at most two dimensions, all[symbols, instances]")),
             },
-            name if !name.is_empty() && !name.starts_with("..") && !name.contains(|c: char| c.is_whitespace() || "()[],=".contains(c)) => {
+            name if !name.is_empty() && !name.starts_with("..") && !name.contains(|c: char| c.is_whitespace() || "()[],=~^".contains(c)) => {
                 Selector::Named(name.to_string(), one()?)
             }
             _ => {
                 return Err(format!(
                     "'{s}' is not a selector (expected SYMBOL, SYMBOL[j], all, all[i], all[i, j], ..all or ..all[k]; \
-                     indexes may be ranges a..b, a..=b, a.., ..b)"
+                     indexes may be ranges a..b, a..=b, a.., ..b; context suffixes are ~N, ~~N, ~N(M^), (M^))"
                 ));
             }
         })
@@ -99,18 +132,21 @@ impl InlineSpec {
             .map(str::trim)
             .filter(|t| !t.is_empty() && !t.contains(|c: char| c.is_whitespace() || "()[],".contains(c)))
             .ok_or_else(|| format!("inline({inner}): the first item must be =SYMBOL, the inlined function"))?;
-        let mut selectors = Vec::new();
+        let mut items = Vec::new();
         for p in &parts[1..] {
-            selectors.push((p.to_string(), Selector::parse(p).map_err(|e| format!("inline({inner}): {e}"))?));
+            let item = Context::split(p).and_then(|(body, context)| {
+                Ok(Item { text: body.to_string(), selector: Selector::parse(body)?, context })
+            });
+            items.push(item.map_err(|e| format!("inline({inner}): {e}"))?);
         }
-        if selectors.is_empty() {
-            selectors.push(("..all[0]".to_string(), Selector::Flat(Span::at(0))));
+        if items.is_empty() {
+            items.push(Item { text: "..all[0]".to_string(), selector: Selector::Flat(Span::at(0)), context: None });
         }
-        Ok(InlineSpec { target: target.to_string(), selectors })
+        Ok(InlineSpec { target: target.to_string(), items })
     }
 
     pub fn callers(&self) -> impl Iterator<Item = &str> {
-        self.selectors.iter().filter_map(|(_, s)| match s {
+        self.items.iter().filter_map(|i| match &i.selector {
             Selector::Named(c, _) => Some(c.as_str()),
             _ => None,
         })
