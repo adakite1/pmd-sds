@@ -5,6 +5,14 @@ armv5te => {
 
 /* ====== ARM9 ====== */
 
+/*(asm-corpus-filename: OS_GetConsoleType, objdump-symbol-name: arm9_bin/OS_GetConsoleType)DONE('os_emulator', us, eu, jp)*/
+#[inline(never)]
+#[unsafe(link_section = ".text.origaddr.02079DA0")]
+#[unsafe(no_mangle)]
+pub extern "C" fn OS_GetConsoleType() -> u32 {
+    OSi_ConsoleTypeCache.set(const { OS_CONSOLE_NITRO | OS_CONSOLE_DEV_CARD | OS_CONSOLE_SIZE_4MB })
+}
+
 #[inline(never)]
 #[unsafe(link_section = ".text.origaddr.0207A36C")]
 #[unsafe(no_mangle)]
@@ -31,6 +39,10 @@ pub extern "C" fn OS_InitArena() {
 #[unsafe(no_mangle)]
 pub extern "C" fn OS_InitArenaEx() {
     //TODO:
+
+    if OSi_MAINEX_ENABLE.get() == 0 || OS_GetConsoleType() & OS_CONSOLE_SIZE_MASK == OS_CONSOLE_SIZE_4MB {
+        OS_SetProtectionRegionsRetail();
+    }
 }
 
 /// This block might feel strange, why are we changing the MPU settings again?
@@ -67,6 +79,7 @@ pub extern "C" fn OS_InitArenaEx() {
 ///
 /// Note that this is only true on the retail console. In an 8 MiB Main RAM debug console,
 /// this is all skipped.
+/*(asm-corpus-filename: [OS_SetProtectionRegion1, OS_SetProtectionRegion2], objdump-symbol-name: inline(=arm9_bin/OS_SetProtectionRegionsRetail, OS_InitArenaEx))DONE('os_protectionRegion')*/
 #[inline(always)]
 pub extern "C" fn OS_SetProtectionRegionsRetail() {
     unsafe {
@@ -121,6 +134,8 @@ pub extern "C" fn OS_GetInitArenaHi(arena_index: u32) -> u32 {
         },
     }
 }
+#[unsafe(link_section = ".data.origaddr.020B2BAC")]
+pub static OSi_ConsoleTypeCache: Global<u32> = Global::new(OSi_CONSOLE_NOT_DETECT);
 
 #[unsafe(link_section = ".bss.origaddr.022B98C4")]
 pub static OSi_Initialized: Global<u32> = Global::new(0);
@@ -132,9 +147,6 @@ pub static OSi_MAINEX_ENABLE: Global<u32> = Global::new(0); /* enable extended M
 armv4t => {
 
 /* ====== ARM7 ====== */
-
-
-
 
 
 /*cfg_select*/ } _

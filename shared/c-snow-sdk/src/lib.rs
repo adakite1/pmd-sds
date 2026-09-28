@@ -9,6 +9,8 @@ use core::cell::UnsafeCell;
 
 use utils::prelude::*;
 
+pub mod consts;
+
 pub mod os;
 
 #[cfg(armv4t)]
@@ -165,8 +167,9 @@ impl<T: Copy> Global<T> {
         unsafe { core::intrinsics::volatile_load(self.0.get()) }
     }
 
-    pub fn set(&self, value: T) {
+    pub fn set(&self, value: T) -> T {
         unsafe { core::intrinsics::volatile_store(self.0.get(), value) }
+        value
     }
 }
 
