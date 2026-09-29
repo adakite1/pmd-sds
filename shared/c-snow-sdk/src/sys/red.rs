@@ -15,3 +15,8 @@
 //!
 //! Nintendo Red-tape Region
 
+#[inline(always)]
+pub const fn hw_red_reserved(main_ram_base: u32) -> u32 {
+    main_ram_base + 0x007FF800
+}
+

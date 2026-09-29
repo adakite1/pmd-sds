@@ -12,8 +12,24 @@ MEMORY {
 }
 
 SECTIONS {
+    __arm7_wram_base = 0x037F8000 /* same as ORIGIN(ARM7_WRAM) from arm7.ld */;
+    /* In this game, ARM7 is built with the assumption that it will have all the WRAM given to it (WRAMCNT = 3),
+        which can be seen in ARM7_WRAM in arm7.ld where you see ARM7_WRAM is the full 96K, with the whole 32K part
+        inside. WRAMCNT = 1 would make a big gap where ARM7 places code and data that is just gone (16 KiB arm7,
+        then that same 16 KiB gets mirrored from arm7's perspective, then arm7 WRAM). WRAMCNT = 2 has the same issue,
+        ARM9 gets the first 16 KiB, then ARM7 sees a mirror of it's upper 16 KiB of compiled data in the lower 16 KiB
+        address space instead. Either way, the built code would completely break.
+        This seems to be the sdk default, MI_Init calls MI_SetWramBank(MI_WRAM_ARM7_ALL) unconditionally on the ARM9,
+        inside OS_Init, and then nothing else in the game writes to WRAMCNT again.
+        Nothing else touches 0x04000247 directly, and no one else calls MI_SetWramBank either. Which makes
+        sense since again, that would break the ARM7 code's build assumptions.
+        
+        This also means that Arena 6 is empty. */
+
     __main_ram_base = ORIGIN(MAIN_RAM);
     __itcm_base = ORIGIN(ITCM);
+    __itcm_heap_start = __itcm_base + LENGTH(ITCM); /* read as + 0x4000 */
+    __itcm_heap_end = __itcm_base + 0x8000;
     __dtcm_base = ORIGIN(DTCM);
 
     __main_ram_top = ORIGIN(MAIN_RAM) + LENGTH(MAIN_RAM); /* 0x02400000 */
@@ -188,6 +204,52 @@ SECTIONS {
     /* alignment: [svc align 8, irq align 4 only, sys align 4 only] */
     __irq_handler_pointer = __dtcm_top - 4; /* 0x027E4000 - 4 = 0x27E3FFC */
     ASSERT(__dtcm_bss_end <= __system_stack_pointer, "DTCM data/bss overlaps the stacks")
+
+    /* This "multifunctional" size parameter lets you either set the share of space given to
+        the System stack or the extra heap arena, with a signed value. The system stack grows
+        downward, but it might not grow down *so* much, so some of that space from the stack
+        bottom, down to the end of DTCM's whole autoloaded fixed block (including after bss), in between
+        those two, you can shove a heap in there.
+        > 0: the stack gets exactly that many bytes, and the arena gets the leftovers.
+        < 0: reversed, where the arena gets |multifunctional_size| bytes, and the stack gets the leftovers.
+        == 0: give everything to the stack (clamped so it's at least __dtcm_base, which does nothing, and I don't know
+          why the sdk code does this).
+         */
+    __system_stack_size_multifunctional = 0;
+
+    /* Bottom of the IRQ stack = top of the system stack region */
+    __irq_stack_bottom = __svc_irq_stack_boundary - __irq_stack_size; /* 0x27E3F80 - 0x800 = 0x27E3780 */
+    __system_stack_top_real_without_anti_aapcs_align = __irq_stack_bottom;
+
+    /* rust-lld evaluates expressions as unsigned 64-bit values, meaning x < 0 = false always at all times. Instead we
+        test bit 31 instead and separate out the sign and magnitude of the multifunctional size. */
+    __sys_stack_sz_neg = (__system_stack_size_multifunctional & 0x80000000) != 0;
+    __sys_stack_sz_abs = (__sys_stack_sz_neg
+                            ? (0 - __system_stack_size_multifunctional)
+                            : __system_stack_size_multifunctional) & 0x7FFFFFFF;
+
+    /* Arena 4 (DTCM heap) settings generated from above */
+
+    __additional_heap_space_in_dtcm_lo = __dtcm_bss_end;
+    /* The lowest you can go is the autoloaded DTCM data's end point
+        because the heap should not accidentally overwrite autoloaded DTCM
+        data. */
+
+    __additional_heap_space_in_dtcm_hi =
+        (__system_stack_size_multifunctional == 0)
+            ? MAX(__additional_heap_space_in_dtcm_lo, __dtcm_base) /* == 0 */
+            : (__sys_stack_sz_neg
+                ? (__additional_heap_space_in_dtcm_lo + __sys_stack_sz_abs)                 /* < 0 */
+                : (__system_stack_top_real_without_anti_aapcs_align - __sys_stack_sz_abs)); /* > 0 */
+
+    __system_stack_bottom = __additional_heap_space_in_dtcm_hi;
+    __system_stack_size = __system_stack_top_real_without_anti_aapcs_align - __system_stack_bottom;
+    __additional_heap_space_in_dtcm = __additional_heap_space_in_dtcm_hi - __additional_heap_space_in_dtcm_lo;
+
+    ASSERT(__additional_heap_space_in_dtcm_hi >= __additional_heap_space_in_dtcm_lo,
+        "system stack size too large, overlaps DTCM fixed region")
+    ASSERT(__additional_heap_space_in_dtcm_hi <= __irq_stack_bottom,
+        "additional heap arena in DTCM has a size set too large, overlaps IRQ stack")
 
     .static_footer : ALIGN(4) { /* when building the ROM, arm9_size should be set to exclude this footer (image_len - 12 bytes) */
         LONG(0xDEC00621);

@@ -1,4 +1,4 @@
-use crate::{Global, cp15_size_encoding, set_cp15_region};
+use crate::{Global, consts::{HW_MAIN_MEM_DEBUGGER_OFFSET, OS_CONSOLE_DEV_CARD, OS_CONSOLE_NITRO, OS_CONSOLE_SIZE_4MB, OS_CONSOLE_SIZE_MASK, OSi_CONSOLE_NOT_DETECT}, cp15_size_encoding, linker_addr, set_cp15_region, sys::{HW_CARD_ROM_HEADER_SIZE, HW_DOWNLOAD_PARAMETER_SIZE, SYS_AREA_START, red::hw_red_reserved}};
 
 cfg_select! {
 armv5te => {
@@ -101,6 +101,18 @@ pub extern "C" fn OS_SetProtectionRegionsRetail() {
     }
 }
 
+unsafe extern "C" {
+    static __main_ram_top_arm9: u8;
+    static __main_ram_base: u8;
+    static __itcm_heap_end: u8;
+    static __additional_heap_space_in_dtcm_hi: u8;
+    static __arm7_wram_base: u8;
+    static __static_data_end: u8;
+    static __itcm_heap_start: u8;
+    static __additional_heap_space_in_dtcm_lo: u8;
+}
+
+/*(asm-corpus-filename: OS_GetInitArenaHi, objdump-symbol-name: arm9_bin/OS_GetInitArenaHi)*/
 #[inline(never)]
 #[unsafe(link_section = ".text.origaddr.0207A54C")]
 #[unsafe(no_mangle)]
@@ -111,29 +123,108 @@ pub extern "C" fn OS_GetInitArenaHi(arena_index: u32) -> u32 {
             0
         },
         0 => {
-            //TODO:
+            linker_addr(&raw const __main_ram_top_arm9)
         },
         1 => {
             /* no such arena */
             0
         },
         2 => {
-            //TODO:
+            if OSi_MAINEX_ENABLE.get() == 0 {
+                return 0;
+            }
+            if OS_GetConsoleType() & OS_CONSOLE_SIZE_MASK != OS_CONSOLE_SIZE_4MB {
+                /* big debug console with 8 MiB Main RAM, everything starting from
+                    the lower half, in the middle of it starting from where usually the lower
+                    mirror of the arm7 Main RAM would be at 0x023E0000 (because separate
+                    memory on debug console, large RAM remember), all the way to 0x02700000
+                    (which stops short of where arm9's Main RAM upper-mirror would end
+                    at 0x027E0000 since there's also some space reserved for the
+                    hardware debugger unit), is free space for this arena. */
+                return linker_addr(&raw const __main_ram_base) + HW_MAIN_MEM_DEBUGGER_OFFSET;
+            }
+            0
         },
         3 => {
-            //TODO:
+            linker_addr(&raw const __itcm_heap_end)
         },
         4 => {
-            //TODO:
+            linker_addr(&raw const __additional_heap_space_in_dtcm_hi)
         },
         5 => {
-            //TODO:
+            /* This does not make any sense. Why would we base it off of *minus* of all operations? You might wonder.
+                In addresses, additions and subtractions are supposed to tell you relationships. But here,
+                semantically, "it has to be two metadata blocks *before* RED" makes zero sense.
+                What relationship does "RED" have with the two metadata blocks? Does it use them?
+                Does it seek for it with negative offset? Does it like having it for company?
+                Because as far as I can tell, the space, the 0x160 + 0x20 space it creates before "RED"
+                here, *ISN'T EVEN FILLED WITH WHAT IT SAYS ON THE TIN.*
+                It's *dead*. The region there, 0x27FF680..0x027FF800? There are no references to it in the BIOS and firmware,
+                in the game, anywhere, for the lower mirror too. So it's not just that the implied dependency of "RED needs to
+                come right after the two blocks" is not true, not only does *RED* not access this, not even *ANYTHING ELSE* accesses
+                this region. If you're wondering about the 0x160 + 0x20 regions, that's *somewhere else*, at HW_CARD_ROM_HEADER and
+                HW_DOWNLOAD_PARAMETER respectively (0x027FFA80 with size 0x160, and then 0x20 immediately after for the latter.)
+                
+                If I had to guess, at some point the layout was different, and the carved out gap space here *was* where those two
+                were supposed to go. Then it got changed, and no one updated this. */
+            hw_red_reserved(linker_addr(&raw const __main_ram_base)) - HW_CARD_ROM_HEADER_SIZE - HW_DOWNLOAD_PARAMETER_SIZE
         },
         6 => {
-            //TODO:
+            /* How much heap in wram for arm9, see __arm7_wram_base comment in
+                arm9.ld for why this is effectively zero size in this game. */
+            linker_addr(&raw const __arm7_wram_base)
         },
     }
 }
+
+/*(asm-corpus-filename: OS_GetInitArenaLo, objdump-symbol-name: arm9_bin/OS_GetInitArenaLo)*/
+#[inline(never)]
+#[unsafe(link_section = ".text.origaddr.0207A630")]
+#[unsafe(no_mangle)]
+pub extern "C" fn OS_GetInitArenaLo(arena_index: u32) -> u32 {
+    match arena_index {
+        7.. => {
+            /* no such arena */
+            0
+        },
+        0 => {
+            /* Starting from the end of the arm9 static code (where the previous start of the autoloaded data was)
+                can be used as a heap arena by this point because the autoloaded content has long since already been
+                copied over to their respective VMA positions. */
+            linker_addr(&raw const __static_data_end)
+        },
+        1 => {
+            /* no such arena */
+            0
+        },
+        2 => {
+            if OSi_MAINEX_ENABLE.get() == 0 {
+                return 0;
+            }
+            if OS_GetConsoleType() & OS_CONSOLE_SIZE_MASK != OS_CONSOLE_SIZE_4MB {
+                return linker_addr(&raw const __main_ram_top_arm9);
+            }
+            0
+        },
+        3 => {
+            linker_addr(&raw const __itcm_heap_start)
+        },
+        4 => {
+            linker_addr(&raw const __additional_heap_space_in_dtcm_lo)
+        },
+        5 => {
+            /* The start of the System and SDK Area, all the way up to 0x027FF67F in the original game,
+                is the shared heap arena, accessible from both CPUs. */
+            SYS_AREA_START
+        },
+        6 => {
+            /* How much heap in wram for arm9, see __arm7_wram_base comment in
+                arm9.ld for why this is effectively zero size in this game. */
+            linker_addr(&raw const __arm7_wram_base)
+        },
+    }
+}
+
 #[unsafe(link_section = ".data.origaddr.020B2BAC")]
 pub static OSi_ConsoleTypeCache: Global<u32> = Global::new(OSi_CONSOLE_NOT_DETECT);
 

@@ -13,7 +13,7 @@ pub mod consts;
 
 pub mod os;
 
-pub mod red;
+pub mod sys;
 
 #[cfg(armv4t)]
 #[unsafe(link_section = ".text.wram")]
