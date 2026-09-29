@@ -64,11 +64,11 @@ static LINK_SECTION: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"link_secti
 static INSN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^([\s>]*[0-9a-f]+:)\t([0-9a-f ]+)\t(.*)$").unwrap());
 static LABEL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[0-9a-f]+ <[^>]+>:$").unwrap());
 static WORD_LOAD: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\tldr(?:eq|ne|cs|hs|cc|lo|mi|pl|vs|vc|hi|ls|ge|lt|gt|le|al)?\t[a-z0-9]+, \[pc, #-?\d+\]\t@ \(?([0-9a-f]+)")
+    Regex::new(r"\tldr(?:eq|ne|cs|hs|cc|lo|mi|pl|vs|vc|hi|ls|ge|lt|gt|le|al)?\t[a-z0-9]+, \[pc(?:, #-?\d+)?\]\t@ \(?([0-9a-f]+)")
         .unwrap()
 });
 static WORD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\.word\t0x([0-9a-f]{8})$").unwrap());
-static POOL_REF: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[pc, #-?\d+\].*@ \(?([0-9a-f]+)").unwrap());
+static POOL_REF: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[pc(?:, #-?\d+)?\].*@ \(?([0-9a-f]+)").unwrap());
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub(crate) enum Cpu {
