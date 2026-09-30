@@ -112,7 +112,7 @@ unsafe extern "C" {
     static __additional_heap_space_in_dtcm_lo: u8;
 }
 
-/*(asm-corpus-filename: OS_GetInitArenaHi, objdump-symbol-name: arm9_bin/OS_GetInitArenaHi)*/
+/*(asm-corpus-filename: OS_GetInitArenaHi, objdump-symbol-name: arm9_bin/OS_GetInitArenaHi)DONE('os_arena', us, eu, jp)*/
 #[inline(never)]
 #[unsafe(link_section = ".text.origaddr.0207A54C")]
 #[unsafe(no_mangle)]
@@ -177,7 +177,7 @@ pub extern "C" fn OS_GetInitArenaHi(arena_index: u32) -> u32 {
     }
 }
 
-/*(asm-corpus-filename: OS_GetInitArenaLo, objdump-symbol-name: arm9_bin/OS_GetInitArenaLo)*/
+/*(asm-corpus-filename: OS_GetInitArenaLo, objdump-symbol-name: arm9_bin/OS_GetInitArenaLo)DONE('os_arena', us, eu, jp)*/
 #[inline(never)]
 #[unsafe(link_section = ".text.origaddr.0207A630")]
 #[unsafe(no_mangle)]
