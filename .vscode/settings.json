@@ -12,7 +12,8 @@
       "command": "cd ${workspaceFolder} && cargo -q xtask corpus --style columns,compact,align --labels before --stub-mode position-with-warn",
       "runIn": "backend",
       "runningStatusMessage": "Running corpus sync...",
-      "finishStatusMessage": "Done."
+      "finishStatusMessage": "Done.",
+      "doNotDisturb": true
     }
   ]
 }
