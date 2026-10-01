@@ -722,37 +722,37 @@ macro_rules! raw_field {
 
     // Chaining arms: peel off the first access (which must not be `final` or a range)
     // and then feed its pointer back in as the base of the rest.
-    ($base:expr, mut $field:ident [$idx:expr], $($rest:tt)+) => {
+    ($base:expr, mut $field:ident [$idx:expr]~, $($rest:tt)+) => {
         $crate::raw_field!({
             if false { $crate::__single_index(&$idx); }
             $crate::raw_field!($base, mut $field [$idx])
         }, $($rest)+)
     };
-    ($base:expr, ldr $field:ident [$idx:expr], $($rest:tt)+) => {
+    ($base:expr, ldr $field:ident [$idx:expr]~, $($rest:tt)+) => {
         $crate::raw_field!($crate::raw_field!($base, ldr $field [$idx]), $($rest)+)
     };
-    ($base:expr, $field:ident [$idx:expr], $($rest:tt)+) => {
+    ($base:expr, $field:ident [$idx:expr]~, $($rest:tt)+) => {
         $crate::raw_field!({
             if false { $crate::__single_index(&$idx); }
             $crate::raw_field!($base, $field [$idx])
         }, $($rest)+)
     };
-    ($base:expr, mut $field:ident, $($rest:tt)+) => {
+    ($base:expr, mut $field:ident~, $($rest:tt)+) => {
         $crate::raw_field!($crate::raw_field!($base, mut $field), $($rest)+)
     };
-    ($base:expr, ldr $field:ident, $($rest:tt)+) => {
+    ($base:expr, ldr $field:ident~, $($rest:tt)+) => {
         $crate::raw_field!($crate::raw_field!($base, ldr $field), $($rest)+)
     };
-    ($base:expr, $field:ident, $($rest:tt)+) => {
+    ($base:expr, $field:ident~, $($rest:tt)+) => {
         $crate::raw_field!($crate::raw_field!($base, $field), $($rest)+)
     };
-    ($base:expr, final mut $field:ident $([$idx:expr])?, $($rest:tt)+) => {
+    ($base:expr, final mut $field:ident $([$idx:expr])?~, $($rest:tt)+) => {
         compile_error!("`final` is only allowed on the last access of a chain")
     };
-    ($base:expr, final ldr $field:ident $([$idx:expr])?, $($rest:tt)+) => {
+    ($base:expr, final ldr $field:ident $([$idx:expr])?~, $($rest:tt)+) => {
         compile_error!("`final` is only allowed on the last access of a chain")
     };
-    ($base:expr, final $field:ident $([$idx:expr])?, $($rest:tt)+) => {
+    ($base:expr, final $field:ident $([$idx:expr])?~, $($rest:tt)+) => {
         compile_error!("`final` is only allowed on the last access of a chain")
     };
 }
