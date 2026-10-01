@@ -648,6 +648,16 @@ pub fn __ldr_index<T: LdrIndex>(_: &T) {}
 /// For array or slice fields, you can do "field[i]" to get the address of a single
 /// element, or "field[range]" for an iterator over element pointers, or volatile wrappers
 /// if "final" is used in either aforementioned case.
+///
+/// **Intuitively,** think of this as follows: Usually in Rustlang you have two ways to deal
+/// with complex raw pointer types like structs that need a nested path. Either every single step
+/// is safe, like "struct.field_1.subfield_1.subsubfield_1" where you need a safe wrapper at *every*
+/// level, or you do what is essentially pointer arithmetic and lose a significant part of the
+/// ergonomics of having defined the intermediate types in the first place. This is somewhere in-between.
+/// The idea is that the pointer arithmetic part (the part where you go field to field until you get to
+/// the field you wanna touch) is rarely problematic because you are not accessing anything yet, so that
+/// part can be significantly improved ergonomically. Basic pointer-chasing too. Most data on bare
+/// metal work like this, so no need to enforce that we have safe wrappers *every* level down.
 #[macro_export]
 macro_rules! raw_field {
     (@index $idx:expr, $array:expr) => {{
