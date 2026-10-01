@@ -631,13 +631,25 @@ impl<E: Ptr> PtrIndex<RangeFull, E> for KnownLen {
 
 #[diagnostic::on_unimplemented(
     message = "automatic `ldr` from multiple pointers is judged hazardous and thus not implemented",
-    note = "trying to automatically load from a whole range of pointers here"
+    note = "trying to automatically load from a whole range of pointers here (`{Self}`)"
 )]
 pub trait LdrIndex {}
 impl LdrIndex for usize {}
 
+#[doc(hidden)]
 #[inline(always)]
 pub fn __ldr_index<T: LdrIndex>(_: &T) {}
+
+#[diagnostic::on_unimplemented(
+    message = "indexing with range is not allowed in the middle of an access chain",
+    note = "ranges are only allowed on the last access in a chain"
+)]
+pub trait SingleIndex {}
+impl SingleIndex for usize {}
+
+#[doc(hidden)]
+#[inline(always)]
+pub fn __single_index<T: SingleIndex>(_: &T) {}
 
 /// Returns a raw pointer to a named struct field, or for
 /// the last field in a hierarchical sequence of accesses that you want to read or write to,
@@ -706,6 +718,42 @@ macro_rules! raw_field {
     };
     ($base:expr, $field:ident) => {
         &raw const (*($base)).$field
+    };
+
+    // Chaining arms: peel off the first access (which must not be `final` or a range)
+    // and then feed its pointer back in as the base of the rest.
+    ($base:expr, mut $field:ident [$idx:expr], $($rest:tt)+) => {
+        $crate::raw_field!({
+            if false { $crate::__single_index(&$idx); }
+            $crate::raw_field!($base, mut $field [$idx])
+        }, $($rest)+)
+    };
+    ($base:expr, ldr $field:ident [$idx:expr], $($rest:tt)+) => {
+        $crate::raw_field!($crate::raw_field!($base, ldr $field [$idx]), $($rest)+)
+    };
+    ($base:expr, $field:ident [$idx:expr], $($rest:tt)+) => {
+        $crate::raw_field!({
+            if false { $crate::__single_index(&$idx); }
+            $crate::raw_field!($base, $field [$idx])
+        }, $($rest)+)
+    };
+    ($base:expr, mut $field:ident, $($rest:tt)+) => {
+        $crate::raw_field!($crate::raw_field!($base, mut $field), $($rest)+)
+    };
+    ($base:expr, ldr $field:ident, $($rest:tt)+) => {
+        $crate::raw_field!($crate::raw_field!($base, ldr $field), $($rest)+)
+    };
+    ($base:expr, $field:ident, $($rest:tt)+) => {
+        $crate::raw_field!($crate::raw_field!($base, $field), $($rest)+)
+    };
+    ($base:expr, final mut $field:ident $([$idx:expr])?, $($rest:tt)+) => {
+        compile_error!("`final` is only allowed on the last access of a chain")
+    };
+    ($base:expr, final ldr $field:ident $([$idx:expr])?, $($rest:tt)+) => {
+        compile_error!("`final` is only allowed on the last access of a chain")
+    };
+    ($base:expr, final $field:ident $([$idx:expr])?, $($rest:tt)+) => {
+        compile_error!("`final` is only allowed on the last access of a chain")
     };
 }
 
