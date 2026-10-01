@@ -5,7 +5,7 @@
 #![allow(non_upper_case_globals)]
 #![allow(non_snake_case)]
 
-use core::cell::UnsafeCell;
+use core::{cell::UnsafeCell, marker::PhantomData, ops::{Range, RangeFrom, RangeFull, RangeInclusive, RangeTo, RangeToInclusive}};
 
 use utils::prelude::*;
 
@@ -391,14 +391,14 @@ impl<T, const N: usize> Wrap<*mut [T; N]> {
 impl<T> Wrap<*const [T]> {
     #[inline(always)]
     pub fn split(self) -> (*const T, KnownLen) {
-        (self.0.cast(), KnownLen(self.0.len()))
+        (self.0.cast(), KnownLen(core::intrinsics::ptr_metadata(self.0)))
     }
 }
 
 impl<T> Wrap<*mut [T]> {
     #[inline(always)]
     pub fn split(self) -> (*mut T, KnownLen) {
-        (self.0.cast(), KnownLen(self.0.len()))
+        (self.0.cast(), KnownLen(core::intrinsics::ptr_metadata(self.0 as *const [T])))
     }
 }
 
@@ -450,42 +450,92 @@ impl<E> ElemPtrs<E, Raw> {
     }
 }
 
+impl<E: Ptr, W: VolWrap<E>> ElemPtrs<E, W> {
+    #[inline(always)]
+    fn remaining(&self) -> usize {
+        if self.range.start < self.range.end {
+            self.range.end.wrapping_sub(self.range.start)
+        } else {
+            0
+        }
+    }
+}
+
 impl<E: Ptr, W: VolWrap<E>> Iterator for ElemPtrs<E, W> {
     type Item = W::Output;
 
     #[inline(always)]
     fn next(&mut self) -> Option<W::Output> {
-        let base = self.base;
-        self.range.next().map(|i| W::wrap(base.wrapping_add_(i)))
+        let i = self.range.start;
+        if i < self.range.end {
+            self.range.start = i.wrapping_add(1);
+            Some(W::wrap(self.base.wrapping_add_(i)))
+        } else {
+            None
+        }
     }
 
     #[inline(always)]
     fn nth(&mut self, n: usize) -> Option<W::Output> {
-        let base = self.base;
-        self.range.nth(n).map(|i| W::wrap(base.wrapping_add_(i)))
+        if n < self.remaining() {
+            let i = self.range.start.wrapping_add(n);
+            self.range.start = i.wrapping_add(1);
+            Some(W::wrap(self.base.wrapping_add_(i)))
+        } else {
+            self.range.start = self.range.end;
+            None
+        }
     }
 
     #[inline(always)]
     fn size_hint(&self) -> (usize, Option<usize>) {
-        self.range.size_hint()
+        let n = self.remaining();
+        (n, Some(n))
+    }
+
+    #[inline(always)]
+    fn count(self) -> usize {
+        self.remaining()
+    }
+
+    #[inline(always)]
+    fn last(mut self) -> Option<W::Output> {
+        self.next_back()
     }
 }
 
 impl<E: Ptr, W: VolWrap<E>> DoubleEndedIterator for ElemPtrs<E, W> {
     #[inline(always)]
     fn next_back(&mut self) -> Option<W::Output> {
-        let base = self.base;
-        self.range.next_back().map(|i| W::wrap(base.wrapping_add_(i)))
+        if self.range.start < self.range.end {
+            let i = self.range.end.wrapping_sub(1);
+            self.range.end = i;
+            Some(W::wrap(self.base.wrapping_add_(i)))
+        } else {
+            None
+        }
     }
 
     #[inline(always)]
     fn nth_back(&mut self, n: usize) -> Option<W::Output> {
-        let base = self.base;
-        self.range.nth_back(n).map(|i| W::wrap(base.wrapping_add_(i)))
+        if n < self.remaining() {
+            let i = self.range.end.wrapping_sub(1).wrapping_sub(n);
+            self.range.end = i;
+            Some(W::wrap(self.base.wrapping_add_(i)))
+        } else {
+            self.range.end = self.range.start;
+            None
+        }
     }
 }
 
-impl<E: Ptr, W: VolWrap<E>> ExactSizeIterator for ElemPtrs<E, W> {}
+impl<E: Ptr, W: VolWrap<E>> ExactSizeIterator for ElemPtrs<E, W> {
+    #[inline(always)]
+    fn len(&self) -> usize {
+        self.remaining()
+    }
+}
+
 impl<E: Ptr, W: VolWrap<E>> core::iter::FusedIterator for ElemPtrs<E, W> {}
 
 impl<E: Ptr> IntoVolatile for ElemPtrs<E, Raw>
@@ -499,6 +549,17 @@ where
     }
 }
 
+#[diagnostic::on_unimplemented(
+    message = "array with length `{Self}` cannot be indexed by `{I}`",
+    label = "trying to index into an array of unknown size without an end index",
+    note = "try indexing with one of `a..b`, `a..=b`, `..b`, `..=b`, or if you",
+    note = "know the length of the field, change the type of the field",
+    note = "to a fixed size array type [T; N] or slice [T] instead?"
+)]
+pub trait PtrIndex<I, E: Ptr>: Len {
+    type Output;
+    fn project(self, idx: I, first: E) -> Self::Output;
+}
 
 impl<E: Ptr, L: Len> PtrIndex<usize, E> for L {
     type Output = E;
@@ -546,7 +607,8 @@ impl<E: Ptr, L: Len> PtrIndex<RangeToInclusive<usize>, E> for L {
     #[inline(always)]
     #[track_caller]
     fn project(self, r: RangeToInclusive<usize>, first: E) -> ElemPtrs<E> {
-        self.project(0..=r.end, first)
+        debug_assert!(r.end != usize::MAX, "inclusive range end overflows");
+        self.project(0..r.end.wrapping_add(1), first)
     }
 }
 
@@ -578,6 +640,26 @@ impl<E: Ptr> PtrIndex<RangeFull, E> for KnownLen {
 /// if "final" is used in either aforementioned case.
 #[macro_export]
 macro_rules! raw_field {
+    (@index $idx:expr, $array:expr) => {{
+        #[allow(unused_imports)]
+        use $crate::DefaultWrap as _;
+        let (first, len_struct) = $crate::Wrap($array).split();
+        $crate::PtrIndex::project(len_struct, $idx, first)
+    }};
+
+    ($base:expr, final mut $field:ident [$idx:expr]) => {
+        $crate::IntoVolatile::into_volatile($crate::raw_field!($base, mut $field [$idx]))
+    };
+    ($base:expr, final $field:ident [$idx:expr]) => {
+        $crate::IntoVolatile::into_volatile($crate::raw_field!($base, $field [$idx]))
+    };
+    ($base:expr, mut $field:ident [$idx:expr]) => {
+        $crate::raw_field!(@index $idx, &raw mut (*($base)).$field)
+    };
+    ($base:expr, $field:ident [$idx:expr]) => {
+        $crate::raw_field!(@index $idx, &raw const (*($base)).$field)
+    };
+
     ($base:expr, final mut $field:ident) => {
         $crate::VolatileMut::new(&raw mut (*($base)).$field)
     };
