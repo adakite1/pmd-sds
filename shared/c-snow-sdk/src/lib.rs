@@ -629,6 +629,16 @@ impl<E: Ptr> PtrIndex<RangeFull, E> for KnownLen {
     }
 }
 
+#[diagnostic::on_unimplemented(
+    message = "automatic `ldr` from multiple pointers is judged hazardous and thus not implemented",
+    note = "trying to automatically load from a whole range of pointers here"
+)]
+pub trait LdrIndex {}
+impl LdrIndex for usize {}
+
+#[inline(always)]
+pub fn __ldr_index<T: LdrIndex>(_: &T) {}
+
 /// Returns a raw pointer to a named struct field, or for
 /// the last field in a hierarchical sequence of accesses that you want to read or write to,
 /// "final field" or "final mut field" wraps the raw pointer
@@ -658,6 +668,21 @@ macro_rules! raw_field {
     };
     ($base:expr, $field:ident [$idx:expr]) => {
         $crate::raw_field!(@index $idx, &raw const (*($base)).$field)
+    };
+
+    ($base:expr, final ldr $field:ident [$idx:expr]) => {
+        $crate::IntoVolatile::into_volatile($crate::raw_field!($base, ldr $field [$idx]))
+    };
+    ($base:expr, ldr $field:ident [$idx:expr]) => {{
+        if false { $crate::__ldr_index(&$idx); }
+        $crate::read($crate::raw_field!($base, $field [$idx]))
+    }};
+
+    ($base:expr, final ldr $field:ident) => {
+        $crate::IntoVolatile::into_volatile($crate::raw_field!($base, ldr $field))
+    };
+    ($base:expr, ldr $field:ident) => {
+        $crate::read($crate::raw_field!($base, $field))
     };
 
     ($base:expr, final mut $field:ident) => {
