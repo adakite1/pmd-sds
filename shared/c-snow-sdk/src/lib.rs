@@ -165,14 +165,431 @@ impl<T> Global<T> {
 }
 
 impl<T: Copy> Global<T> {
+    #[inline(always)]
     pub fn get(&self) -> T {
         unsafe { core::intrinsics::volatile_load(self.0.get()) }
     }
 
+    #[inline(always)]
     pub fn set(&self, value: T) -> T {
         unsafe { core::intrinsics::volatile_store(self.0.get(), value) }
         value
     }
+}
+
+/// Raw read
+#[inline(always)]
+pub fn read<T>(src: *const T) -> T {
+    unsafe { core::intrinsics::volatile_load(src) }
+}
+
+/// Raw write
+#[inline(always)]
+pub fn write<T: Copy>(dst: *mut T, val: T) -> T {
+    unsafe { core::intrinsics::volatile_store(dst, val) }
+    val
+}
+
+#[repr(transparent)]
+pub struct Volatile<T> {
+    ptr: *const T,
+}
+
+impl<T: Copy> Volatile<T> {
+    #[inline(always)]
+    pub const fn new(ptr: *const T) -> Self {
+        Self { ptr }
+    }
+
+    #[inline(always)]
+    pub fn get(&self) -> T {
+        unsafe { core::intrinsics::volatile_load(self.ptr) }
+    }
+}
+
+#[repr(transparent)]
+pub struct VolatileMut<T> {
+    ptr: *mut T,
+}
+
+impl<T: Copy> VolatileMut<T> {
+    #[inline(always)]
+    pub const fn new(ptr: *mut T) -> Self {
+        Self { ptr }
+    }
+
+    #[inline(always)]
+    pub fn get(&self) -> T {
+        unsafe { core::intrinsics::volatile_load(self.ptr) }
+    }
+
+    #[inline(always)]
+    pub fn set(&self, value: T) -> T {
+        unsafe { core::intrinsics::volatile_store(self.ptr, value) }
+        value
+    }
+}
+
+pub trait IntoVolatile {
+    type IntoVolatile;
+    fn into_volatile(self) -> Self::IntoVolatile;
+}
+
+impl<T: Copy> IntoVolatile for *const T {
+    type IntoVolatile = Volatile<T>;
+    #[inline(always)]
+    fn into_volatile(self) -> Self::IntoVolatile {
+        Volatile::new(self)
+    }
+}
+
+impl<T: Copy> IntoVolatile for *mut T {
+    type IntoVolatile = VolatileMut<T>;
+    #[inline(always)]
+    fn into_volatile(self) -> Self::IntoVolatile {
+        VolatileMut::new(self)
+    }
+}
+
+/// Any raw pointer `*const T` or `*mut T`.
+///
+/// Since `wrapping_add` on both are implemented as inherent methods,
+/// this trait gives access to those as universal trait methods.
+pub trait Ptr: Copy {
+    fn wrapping_add_(self, count: usize) -> Self;
+}
+
+impl<T> Ptr for *const T {
+    #[inline(always)]
+    fn wrapping_add_(self, count: usize) -> Self {
+        self.wrapping_add(count)
+    }
+}
+
+impl<T> Ptr for *mut T {
+    #[inline(always)]
+    fn wrapping_add_(self, count: usize) -> Self {
+        self.wrapping_add(count)
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct KnownLen(pub usize);
+
+#[derive(Clone, Copy)]
+pub struct UnknownLen;
+
+pub trait Len: Copy {
+    fn check_index(self, idx: usize);
+    fn check_range(self, start: usize, end: usize);
+}
+
+impl Len for KnownLen {
+    #[inline(always)]
+    #[track_caller]
+    fn check_index(self, idx: usize) {
+        debug_assert!(
+            idx < self.0,
+            "index out of bounds: the len is {} but the index is {}",
+            self.0, idx,
+        );
+    }
+    #[inline(always)]
+    #[track_caller]
+    fn check_range(self, start: usize, end: usize) {
+        debug_assert!(
+            start <= end,
+            "slice index starts at {} but ends at {}",
+            start, end,
+        );
+        debug_assert!(
+            end <= self.0,
+            "range end index {} out of range for array of length {}",
+            end, self.0,
+        );
+    }
+}
+
+impl Len for UnknownLen {
+    #[inline(always)]
+    fn check_index(self, _: usize) {}
+    #[inline(always)]
+    fn check_range(self, _: usize, _: usize) {}
+}
+
+/// Any raw array or slice pointer.
+///
+/// Each form has different semantics, but there are useful ways to define,
+/// "what is the address of the first element" and "what is the number of elements inside"
+/// for each, so this provides a shared naming convention to access those.
+///
+/// This relies on inherent implementations taking precedence over trait ones.
+///
+/// The behavior is different for each form the array pointer takes:
+///
+/// #### `*const [T; N]`
+/// - First element addr: `self.0.cast()` -> `*const T`
+/// - Num elements: `KnownLen(N)` with `N` taken from the type.
+///
+/// #### `*mut [T; N]`
+/// - First element addr: `self.0.cast()` -> `*mut T`
+/// - Num elements: `KnownLen(N)` with `N` taken from the type.
+///
+/// #### `*const [T]`
+/// - First element addr: `self.0.cast()` -> `*const T`
+/// - Num elements: `KnownLen(self.0.len())` (fat-pointer)
+///
+/// #### `*mut [T]`
+/// - First element addr: `self.0.cast()` -> `*mut T`
+/// - Num elements: `KnownLen(self.0.len())` (fat-pointer)
+///
+/// #### `*const T` (array pointer with unknown length)
+/// - First element addr: `self.0` -> `*const T`
+/// - Num elements: **`UnknownLen`**
+///
+/// #### `*mut T` (array pointer with unknown length)
+/// - First element addr: `self.0` -> `*mut T`
+/// - Num elements: **`UnknownLen`**
+#[derive(Clone, Copy)]
+pub struct Wrap<P>(pub P);
+
+pub trait DefaultWrap: Copy {
+    type ElemPtr: Ptr;
+    fn split(self) -> (Self::ElemPtr, UnknownLen);
+}
+
+impl<T> DefaultWrap for Wrap<*const T> {
+    type ElemPtr = *const T;
+    #[inline(always)]
+    fn split(self) -> (Self::ElemPtr, UnknownLen) {
+        (self.0, UnknownLen)
+    }
+}
+
+impl<T> DefaultWrap for Wrap<*mut T> {
+    type ElemPtr = *mut T;
+    #[inline(always)]
+    fn split(self) -> (Self::ElemPtr, UnknownLen) {
+        (self.0, UnknownLen)
+    }
+}
+
+impl<T, const N: usize> Wrap<*const [T; N]> {
+    #[inline(always)]
+    pub fn split(self) -> (*const T, KnownLen) {
+        (self.0.cast(), KnownLen(N))
+    }
+}
+
+impl<T, const N: usize> Wrap<*mut [T; N]> {
+    #[inline(always)]
+    pub fn split(self) -> (*mut T, KnownLen) {
+        (self.0.cast(), KnownLen(N))
+    }
+}
+
+impl<T> Wrap<*const [T]> {
+    #[inline(always)]
+    pub fn split(self) -> (*const T, KnownLen) {
+        (self.0.cast(), KnownLen(self.0.len()))
+    }
+}
+
+impl<T> Wrap<*mut [T]> {
+    #[inline(always)]
+    pub fn split(self) -> (*mut T, KnownLen) {
+        (self.0.cast(), KnownLen(self.0.len()))
+    }
+}
+
+/// [`Raw::wrap`] does nothing and returns the value passed to it
+#[derive(Clone, Copy)]
+pub struct Raw;
+
+/// [`Vol::wrap`] wraps any type `E` with an [`IntoVolatile`] impl
+/// in a volatile wrapper of type `E::IntoVolatile`
+#[derive(Clone, Copy)]
+pub struct Vol;
+
+pub trait VolWrap<E> {
+    type Output;
+
+    fn wrap(e: E) -> Self::Output;
+}
+
+impl<E> VolWrap<E> for Raw {
+    type Output = E;
+
+    #[inline(always)]
+    fn wrap(e: E) -> E {
+        e
+    }
+}
+
+impl<E: IntoVolatile> VolWrap<E> for Vol {
+    type Output = E::IntoVolatile;
+
+    #[inline(always)]
+    fn wrap(e: E) -> E::IntoVolatile {
+        e.into_volatile()
+    }
+}
+
+/// Yields `start + i * size_of::<T>()` for every `i` in the range.
+#[derive(Clone)]
+pub struct ElemPtrs<E, W = Raw> {
+    base: E,
+    range: Range<usize>,
+    _w: PhantomData<W>,
+}
+
+impl<E> ElemPtrs<E, Raw> {
+    #[inline(always)]
+    fn new(base: E, range: Range<usize>) -> Self {
+        Self { base, range, _w: PhantomData }
+    }
+}
+
+impl<E: Ptr, W: VolWrap<E>> Iterator for ElemPtrs<E, W> {
+    type Item = W::Output;
+
+    #[inline(always)]
+    fn next(&mut self) -> Option<W::Output> {
+        let base = self.base;
+        self.range.next().map(|i| W::wrap(base.wrapping_add_(i)))
+    }
+
+    #[inline(always)]
+    fn nth(&mut self, n: usize) -> Option<W::Output> {
+        let base = self.base;
+        self.range.nth(n).map(|i| W::wrap(base.wrapping_add_(i)))
+    }
+
+    #[inline(always)]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.range.size_hint()
+    }
+}
+
+impl<E: Ptr, W: VolWrap<E>> DoubleEndedIterator for ElemPtrs<E, W> {
+    #[inline(always)]
+    fn next_back(&mut self) -> Option<W::Output> {
+        let base = self.base;
+        self.range.next_back().map(|i| W::wrap(base.wrapping_add_(i)))
+    }
+
+    #[inline(always)]
+    fn nth_back(&mut self, n: usize) -> Option<W::Output> {
+        let base = self.base;
+        self.range.nth_back(n).map(|i| W::wrap(base.wrapping_add_(i)))
+    }
+}
+
+impl<E: Ptr, W: VolWrap<E>> ExactSizeIterator for ElemPtrs<E, W> {}
+impl<E: Ptr, W: VolWrap<E>> core::iter::FusedIterator for ElemPtrs<E, W> {}
+
+impl<E: Ptr> IntoVolatile for ElemPtrs<E, Raw>
+where
+    Vol: VolWrap<E>,
+{
+    type IntoVolatile = ElemPtrs<E, Vol>;
+    #[inline(always)]
+    fn into_volatile(self) -> ElemPtrs<E, Vol> {
+        ElemPtrs { base: self.base, range: self.range, _w: PhantomData }
+    }
+}
+
+
+impl<E: Ptr, L: Len> PtrIndex<usize, E> for L {
+    type Output = E;
+    #[inline(always)]
+    #[track_caller]
+    fn project(self, idx: usize, first: E) -> E {
+        self.check_index(idx);
+        first.wrapping_add_(idx)
+    }
+}
+
+impl<E: Ptr, L: Len> PtrIndex<Range<usize>, E> for L {
+    type Output = ElemPtrs<E>;
+    #[inline(always)]
+    #[track_caller]
+    fn project(self, r: Range<usize>, first: E) -> ElemPtrs<E> {
+        self.check_range(r.start, r.end);
+        ElemPtrs::new(first, r)
+    }
+}
+
+impl<E: Ptr, L: Len> PtrIndex<RangeInclusive<usize>, E> for L {
+    type Output = ElemPtrs<E>;
+    #[inline(always)]
+    #[track_caller]
+    fn project(self, r: RangeInclusive<usize>, first: E) -> ElemPtrs<E> {
+        let (start, end) = r.into_inner();
+        debug_assert!(end != usize::MAX, "inclusive range end overflows");
+        let end = end.wrapping_add(1);
+        self.project(start..end, first)
+    }
+}
+
+impl<E: Ptr, L: Len> PtrIndex<RangeTo<usize>, E> for L {
+    type Output = ElemPtrs<E>;
+    #[inline(always)]
+    #[track_caller]
+    fn project(self, r: RangeTo<usize>, first: E) -> ElemPtrs<E> {
+        self.project(0..r.end, first)
+    }
+}
+
+impl<E: Ptr, L: Len> PtrIndex<RangeToInclusive<usize>, E> for L {
+    type Output = ElemPtrs<E>;
+    #[inline(always)]
+    #[track_caller]
+    fn project(self, r: RangeToInclusive<usize>, first: E) -> ElemPtrs<E> {
+        self.project(0..=r.end, first)
+    }
+}
+
+impl<E: Ptr> PtrIndex<RangeFrom<usize>, E> for KnownLen {
+    type Output = ElemPtrs<E>;
+    #[inline(always)]
+    #[track_caller]
+    fn project(self, r: RangeFrom<usize>, first: E) -> ElemPtrs<E> {
+        self.project(r.start..self.0, first)
+    }
+}
+
+impl<E: Ptr> PtrIndex<RangeFull, E> for KnownLen {
+    type Output = ElemPtrs<E>;
+    #[inline(always)]
+    fn project(self, _: RangeFull, first: E) -> ElemPtrs<E> {
+        ElemPtrs::new(first, 0..self.0)
+    }
+}
+
+/// Returns a raw pointer to a named struct field, or for
+/// the last field in a hierarchical sequence of accesses that you want to read or write to,
+/// "final field" or "final mut field" wraps the raw pointer
+/// in a volatile read and read-write wrapper respectively
+/// so you can call `.get` and `.set` on them immediately.
+///
+/// For array or slice fields, you can do "field[i]" to get the address of a single
+/// element, or "field[range]" for an iterator over element pointers, or volatile wrappers
+/// if "final" is used in either aforementioned case.
+#[macro_export]
+macro_rules! raw_field {
+    ($base:expr, final mut $field:ident) => {
+        $crate::VolatileMut::new(&raw mut (*($base)).$field)
+    };
+    ($base:expr, final $field:ident) => {
+        $crate::Volatile::new(&raw const (*($base)).$field)
+    };
+    ($base:expr, mut $field:ident) => {
+        &raw mut (*($base)).$field
+    };
+    ($base:expr, $field:ident) => {
+        &raw const (*($base)).$field
+    };
 }
 
 #[inline(always)]
