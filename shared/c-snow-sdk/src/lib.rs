@@ -708,17 +708,17 @@ macro_rules! raw_field {
     };
 
     ($base:expr, final mut $field:ident) => {
-        $crate::VolatileMut::new(&raw mut (*($base)).$field)
+        $crate::VolatileMut::new(#[allow(unused_unsafe)] unsafe { &raw mut (*($base)).$field })
     };
     ($base:expr, final $field:ident) => {
-        $crate::Volatile::new(&raw const (*($base)).$field)
+        $crate::Volatile::new(#[allow(unused_unsafe)] unsafe { &raw const (*($base)).$field })
     };
-    ($base:expr, mut $field:ident) => {
-        &raw mut (*($base)).$field
-    };
-    ($base:expr, $field:ident) => {
-        &raw const (*($base)).$field
-    };
+    ($base:expr, mut $field:ident) => {{
+        #[allow(unused_unsafe)] unsafe { &raw mut (*($base)).$field }
+    }};
+    ($base:expr, $field:ident) => {{
+        #[allow(unused_unsafe)] unsafe { &raw const (*($base)).$field }
+    }};
 
     // Chaining arms: peel off the first access (which must not be `final` or a range)
     // and then feed its pointer back in as the base of the rest.
