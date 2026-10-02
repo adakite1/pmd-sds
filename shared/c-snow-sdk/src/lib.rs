@@ -489,12 +489,15 @@ impl Len for UnknownLen {
 #[derive(Clone, Copy)]
 pub struct Wrap<P>(pub P);
 
-pub trait DefaultWrap: Copy {
+pub trait DefaultWrap<T>: Copy
+where
+    T: Sized  /* explicitly writing it here even though it's the default because it's *very important* that whatever type it is, that this is Sized */
+{
     type ElemPtr: Ptr;
     fn split(self) -> (Self::ElemPtr, UnknownLen);
 }
 
-impl<T> DefaultWrap for Wrap<*const T> {
+impl<T> DefaultWrap<T> for Wrap<*const T> {
     type ElemPtr = *const T;
     #[inline(always)]
     fn split(self) -> (Self::ElemPtr, UnknownLen) {
@@ -502,7 +505,7 @@ impl<T> DefaultWrap for Wrap<*const T> {
     }
 }
 
-impl<T> DefaultWrap for Wrap<*mut T> {
+impl<T> DefaultWrap<T> for Wrap<*mut T> {
     type ElemPtr = *mut T;
     #[inline(always)]
     fn split(self) -> (Self::ElemPtr, UnknownLen) {
