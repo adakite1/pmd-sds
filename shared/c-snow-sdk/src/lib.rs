@@ -233,15 +233,18 @@ impl RWT for UnalignedVolatileRW {
     }
 }
 
+#[repr(C, packed)]
+struct Unaligned<T>(T);
+
 impl RWT for UnalignedRW {
     #[inline(always)]
     unsafe fn read<T>(src: *const T) -> T {
-        unsafe { core::ptr::read_unaligned(src) }
+        unsafe { core::intrinsics::read_via_copy(src as *const Unaligned<T>).0 }
     }
 
     #[inline(always)]
     unsafe fn write<T: Copy>(dst: *mut T, val: T) -> T {
-        unsafe { core::ptr::write_unaligned(dst, val) }
+        unsafe { core::intrinsics::write_via_move(dst as *mut Unaligned<T>, Unaligned(val)) }
         val
     }
 }
@@ -249,12 +252,12 @@ impl RWT for UnalignedRW {
 impl RWT for RegularRW {
     #[inline(always)]
     unsafe fn read<T>(src: *const T) -> T {
-        unsafe { core::ptr::read(src) }
+        unsafe { core::intrinsics::read_via_copy(src) }
     }
 
     #[inline(always)]
     unsafe fn write<T: Copy>(dst: *mut T, val: T) -> T {
-        unsafe { core::ptr::write(dst, val) }
+        unsafe { core::intrinsics::write_via_move(dst, val) }
         val
     }
 }
