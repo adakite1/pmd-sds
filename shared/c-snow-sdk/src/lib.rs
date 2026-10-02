@@ -869,7 +869,7 @@ macro_rules! raw_field {
     (@final [$($m:tt)*] $base:expr, mut $field:ident $([$idx:expr])?~, $($rest:tt)+) => {
         compile_error!("`final` is only allowed on the last access of a chain")
     };
-    (@final [$($m:tt)*] $base:expr, ldr $field:ident $([$idx:expr])?~, $($rest:tt)+) => {
+    (@final [$($m:tt)*] $base:expr, ldr $(!)? $(+)? $(!)? $field:ident $([$idx:expr])?~, $($rest:tt)+) => {
         compile_error!("`final` is only allowed on the last access of a chain")
     };
     (@final [$($m:tt)*] $base:expr, $field:ident $([$idx:expr])?~, $($rest:tt)+) => {
@@ -879,6 +879,23 @@ macro_rules! raw_field {
         $crate::raw_field!(@wrap [$($m)*] $crate::raw_field!($base, $($access)+))
     };
 
+    // Everything that can appear after an `ldr`
+    (@ldr [$($m:tt)*] $base:expr, $field:ident [$idx:expr]~, $($rest:tt)+) => {
+        $crate::raw_field!($crate::raw_field!(@ldr [$($m)*] $base, $field [$idx]), $($rest)+)
+    };
+    (@ldr [$($m:tt)*] $base:expr, $field:ident~, $($rest:tt)+) => {
+        $crate::raw_field!($crate::raw_field!(@ldr [$($m)*] $base, $field), $($rest)+)
+    };
+    (@ldr [$($m:tt)*] $base:expr, $field:ident [$idx:expr]) => {{
+        if false { $crate::__ldr_index(&$idx); }
+        let ptr = $crate::raw_field!($base, $field [$idx]);
+        #[allow(unused_unsafe)] unsafe { <$crate::raw_field!(@rw $($m)*) as $crate::RWT>::read(ptr) }
+    }};
+    (@ldr [$($m:tt)*] $base:expr, $field:ident) => {{
+        let ptr = $crate::raw_field!($base, $field);
+        #[allow(unused_unsafe)] unsafe { <$crate::raw_field!(@rw $($m)*) as $crate::RWT>::read(ptr) }
+    }};
+
     // Extract just `final` and its modifiers. These have to come before every `$field:ident` arm,
     // since `ident` also matches keywords like `final`.
     ($base:expr, final ! + $($rest:tt)*) => { $crate::raw_field!(@final [! +] $base, $($rest)*) };
@@ -887,21 +904,19 @@ macro_rules! raw_field {
     ($base:expr, final + $($rest:tt)*) => { $crate::raw_field!(@final [+] $base, $($rest)*) };
     ($base:expr, final $($rest:tt)*) => { $crate::raw_field!(@final [] $base, $($rest)*) };
 
+    // Extract just `ldr` and its modifiers.
+    ($base:expr, ldr ! + $($rest:tt)+) => { $crate::raw_field!(@ldr [! +] $base, $($rest)+) };
+    ($base:expr, ldr + ! $($rest:tt)+) => { $crate::raw_field!(@ldr [+ !] $base, $($rest)+) };
+    ($base:expr, ldr ! $($rest:tt)+) => { $crate::raw_field!(@ldr [!] $base, $($rest)+) };
+    ($base:expr, ldr + $($rest:tt)+) => { $crate::raw_field!(@ldr [+] $base, $($rest)+) };
+    ($base:expr, ldr $field:ident $($rest:tt)*) => { $crate::raw_field!(@ldr [] $base, $field $($rest)*) };
+
     ($base:expr, mut $field:ident [$idx:expr]) => {{
         #[allow(unused_unsafe)] unsafe { $crate::raw_field!(@index $idx, &raw mut (*($base)).$field) }
     }};
     ($base:expr, $field:ident [$idx:expr]) => {{
         #[allow(unused_unsafe)] unsafe { $crate::raw_field!(@index $idx, &raw const (*($base)).$field) }
     }};
-
-    ($base:expr, ldr $field:ident [$idx:expr]) => {{
-        if false { $crate::__ldr_index(&$idx); }
-        $crate::read($crate::raw_field!($base, $field [$idx]))
-    }};
-
-    ($base:expr, ldr $field:ident) => {
-        $crate::read($crate::raw_field!($base, $field))
-    };
 
     ($base:expr, mut $field:ident) => {{
         #[allow(unused_unsafe)] unsafe { &raw mut (*($base)).$field }
@@ -927,9 +942,6 @@ macro_rules! raw_field {
             $crate::raw_field!($base, mut $field [$idx])
         }, $($rest)+)
     };
-    ($base:expr, ldr $field:ident [$idx:expr]~, $($rest:tt)+) => {
-        $crate::raw_field!($crate::raw_field!($base, ldr $field [$idx]), $($rest)+)
-    };
     ($base:expr, $field:ident [$idx:expr]~, $($rest:tt)+) => {
         $crate::raw_field!({
             if false { $crate::__single_index(&$idx); }
@@ -938,9 +950,6 @@ macro_rules! raw_field {
     };
     ($base:expr, mut $field:ident~, $($rest:tt)+) => {
         $crate::raw_field!($crate::raw_field!($base, mut $field), $($rest)+)
-    };
-    ($base:expr, ldr $field:ident~, $($rest:tt)+) => {
-        $crate::raw_field!($crate::raw_field!($base, ldr $field), $($rest)+)
     };
     ($base:expr, $field:ident~, $($rest:tt)+) => {
         $crate::raw_field!($crate::raw_field!($base, $field), $($rest)+)
