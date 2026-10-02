@@ -190,45 +190,178 @@ pub fn write<T: Copy>(dst: *mut T, val: T) -> T {
     val
 }
 
-#[repr(transparent)]
-pub struct Volatile<T> {
-    ptr: *const T,
+pub trait RWT {
+    unsafe fn read<T>(src: *const T) -> T;
+    unsafe fn write<T: Copy>(dst: *mut T, val: T) -> T;
 }
 
-impl<T: Copy> Volatile<T> {
+#[derive(Clone, Copy)]
+pub struct VolatileRW;
+
+#[derive(Clone, Copy)]
+pub struct UnalignedVolatileRW;
+
+#[derive(Clone, Copy)]
+pub struct UnalignedRW;
+
+#[derive(Clone, Copy)]
+pub struct RegularRW;
+
+impl RWT for VolatileRW {
+    #[inline(always)]
+    unsafe fn read<T>(src: *const T) -> T {
+        unsafe { core::intrinsics::volatile_load(src) }
+    }
+
+    #[inline(always)]
+    unsafe fn write<T: Copy>(dst: *mut T, val: T) -> T {
+        unsafe { core::intrinsics::volatile_store(dst, val) }
+        val
+    }
+}
+
+impl RWT for UnalignedVolatileRW {
+    #[inline(always)]
+    unsafe fn read<T>(src: *const T) -> T {
+        unsafe { core::intrinsics::unaligned_volatile_load(src) }
+    }
+
+    #[inline(always)]
+    unsafe fn write<T: Copy>(dst: *mut T, val: T) -> T {
+        unsafe { core::intrinsics::unaligned_volatile_store(dst, val) }
+        val
+    }
+}
+
+impl RWT for UnalignedRW {
+    #[inline(always)]
+    unsafe fn read<T>(src: *const T) -> T {
+        unsafe { core::ptr::read_unaligned(src) }
+    }
+
+    #[inline(always)]
+    unsafe fn write<T: Copy>(dst: *mut T, val: T) -> T {
+        unsafe { core::ptr::write_unaligned(dst, val) }
+        val
+    }
+}
+
+impl RWT for RegularRW {
+    #[inline(always)]
+    unsafe fn read<T>(src: *const T) -> T {
+        unsafe { core::ptr::read(src) }
+    }
+
+    #[inline(always)]
+    unsafe fn write<T: Copy>(dst: *mut T, val: T) -> T {
+        unsafe { core::ptr::write(dst, val) }
+        val
+    }
+}
+
+/// [`Volatile`] is volatile-by-default since that's 99% of the use-cases;
+/// we follow an "only opt out of volatile where it's needed" approach here.
+/// But for when the other read-write modes are justified, there are [`From`] impls to
+/// change the nature of the wrapper.
+#[repr(transparent)]
+pub struct Volatile<T, RW: RWT = VolatileRW> {
+    ptr: *const T,
+    _rw: PhantomData<RW>,
+}
+
+impl<T: Copy, RW: RWT> Volatile<T, RW> {
     #[inline(always)]
     pub const fn new(ptr: *const T) -> Self {
-        Self { ptr }
+        Self { ptr, _rw: PhantomData }
+    }
+
+    #[inline(always)]
+    pub const fn with_rw<NewRW: RWT>(self) -> Volatile<T, NewRW> {
+        Volatile { ptr: self.ptr, _rw: PhantomData }
     }
 
     #[inline(always)]
     pub fn get(&self) -> T {
-        unsafe { core::intrinsics::volatile_load(self.ptr) }
+        unsafe { RW::read(self.ptr) }
     }
 }
 
+/// [`VolatileMut`] is volatile-by-default since that's 99% of the use-cases;
+/// we follow an "only opt out of volatile where it's needed" approach here.
+/// But for when the other read-write modes are justified, there are [`From`] impls to
+/// change the nature of the wrapper.
 #[repr(transparent)]
-pub struct VolatileMut<T> {
+pub struct VolatileMut<T, RW: RWT = VolatileRW> {
     ptr: *mut T,
+    _rw: PhantomData<RW>,
 }
 
-impl<T: Copy> VolatileMut<T> {
+impl<T: Copy, RW: RWT> VolatileMut<T, RW> {
     #[inline(always)]
     pub const fn new(ptr: *mut T) -> Self {
-        Self { ptr }
+        Self { ptr, _rw: PhantomData }
+    }
+
+    #[inline(always)]
+    pub const fn with_rw<NewRW: RWT>(self) -> VolatileMut<T, NewRW> {
+        VolatileMut { ptr: self.ptr, _rw: PhantomData }
     }
 
     #[inline(always)]
     pub fn get(&self) -> T {
-        unsafe { core::intrinsics::volatile_load(self.ptr) }
+        unsafe { RW::read(self.ptr) }
     }
 
     #[inline(always)]
     pub fn set(&self, value: T) -> T {
-        unsafe { core::intrinsics::volatile_store(self.ptr, value) }
-        value
+        unsafe { RW::write(self.ptr, value) }
     }
 }
+
+macro_rules! impl_from_volatile_default {
+    ($wrapper:ident => $($target:ty),+ $(,)?) => {
+        $(
+            impl<T> From<$wrapper<T, VolatileRW>> for $wrapper<T, $target> {
+                #[inline(always)]
+                fn from(v: $wrapper<T, VolatileRW>) -> Self {
+                    Self { ptr: v.ptr, _rw: PhantomData }
+                }
+            }
+        )+
+    };
+}
+
+impl_from_volatile_default!(Volatile => UnalignedVolatileRW, UnalignedRW, RegularRW);
+impl_from_volatile_default!(VolatileMut => UnalignedVolatileRW, UnalignedRW, RegularRW);
+
+impl<T, RW: RWT> From<VolatileMut<T, RW>> for Volatile<T, RW> {
+    #[inline(always)]
+    fn from(v: VolatileMut<T, RW>) -> Self {
+        Self { ptr: v.ptr, _rw: PhantomData }
+    }
+}
+
+unsafe impl<T: Send, RW: RWT> Send for Volatile<T, RW> {}
+unsafe impl<T: Send, RW: RWT> Sync for Volatile<T, RW> {}
+
+unsafe impl<T: Send, RW: RWT> Send for VolatileMut<T, RW> {}
+unsafe impl<T: Send, RW: RWT> Sync for VolatileMut<T, RW> {}
+
+impl<T, RW: RWT> Clone for Volatile<T, RW> {
+    #[inline(always)]
+    fn clone(&self) -> Self {
+        Self { ptr: self.ptr, _rw: PhantomData }
+    }
+}
+impl<T, RW: RWT> Copy for Volatile<T, RW> {}
+
+impl<T, RW: RWT> Clone for VolatileMut<T, RW> {
+    #[inline(always)]
+    fn clone(&self) -> Self {
+        Self { ptr: self.ptr, _rw: PhantomData }
+    }
+}
+impl<T, RW: RWT> Copy for VolatileMut<T, RW> {}
 
 pub trait IntoVolatile {
     type IntoVolatile;
