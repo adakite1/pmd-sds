@@ -869,7 +869,10 @@ macro_rules! raw_field {
     (@final [$($m:tt)*] $base:expr, mut $field:ident $([$idx:expr])?~, $($rest:tt)+) => {
         compile_error!("`final` is only allowed on the last access of a chain")
     };
-    (@final [$($m:tt)*] $base:expr, ldr $(!)? $(+)? $(!)? $field:ident $([$idx:expr])?~, $($rest:tt)+) => {
+    (@final [$($m:tt)*] $base:expr, ldr $(!)? $(+)? $field:ident $([$idx:expr])?~, $($rest:tt)+) => {
+        compile_error!("`final` is only allowed on the last access of a chain")
+    };
+    (@final [$($m:tt)*] $base:expr, ldr + ! $field:ident $([$idx:expr])?~, $($rest:tt)+) => {
         compile_error!("`final` is only allowed on the last access of a chain")
     };
     (@final [$($m:tt)*] $base:expr, $field:ident $([$idx:expr])?~, $($rest:tt)+) => {
