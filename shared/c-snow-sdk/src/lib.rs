@@ -190,7 +190,7 @@ pub fn write<T: Copy>(dst: *mut T, val: T) -> T {
     val
 }
 
-pub trait RWT {
+pub trait RWT: Copy {
     unsafe fn read<T>(src: *const T) -> T;
     unsafe fn write<T: Copy>(dst: *mut T, val: T) -> T;
 }
@@ -546,9 +546,9 @@ impl<T> Wrap<*mut [T]> {
 pub struct Raw;
 
 /// [`Vol::wrap`] wraps any type `E` with an [`IntoVolatile`] impl
-/// in a volatile wrapper of type `E::IntoVolatile`
+/// in a volatile wrapper of type `E::IntoVolatile`, with read-write using provided `RW`
 #[derive(Clone, Copy)]
-pub struct Vol;
+pub struct Vol<RW = VolatileRW>(PhantomData<RW>);
 
 pub trait VolWrap<E> {
     type Output;
@@ -565,12 +565,44 @@ impl<E> VolWrap<E> for Raw {
     }
 }
 
-impl<E: IntoVolatile> VolWrap<E> for Vol {
-    type Output = E::IntoVolatile;
+impl<E: IntoVolatile, RW: RWT> VolWrap<E> for Vol<RW>
+where
+    E::IntoVolatile: WithRW,
+{
+    type Output = <E::IntoVolatile as WithRW>::WithRW<RW>;
 
     #[inline(always)]
-    fn wrap(e: E) -> E::IntoVolatile {
-        e.into_volatile()
+    fn wrap(e: E) -> Self::Output {
+        WithRW::with_rw::<RW>(e.into_volatile())
+    }
+}
+
+pub trait WithRW {
+    type WithRW<R: RWT>;
+    fn with_rw<R: RWT>(self) -> Self::WithRW<R>;
+}
+
+impl<T: Copy, RW: RWT> WithRW for Volatile<T, RW> {
+    type WithRW<R: RWT> = Volatile<T, R>;
+    #[inline(always)]
+    fn with_rw<R: RWT>(self) -> Volatile<T, R> {
+        Volatile::<T, RW>::with_rw::<R>(self)
+    }
+}
+
+impl<T: Copy, RW: RWT> WithRW for VolatileMut<T, RW> {
+    type WithRW<R: RWT> = VolatileMut<T, R>;
+    #[inline(always)]
+    fn with_rw<R: RWT>(self) -> VolatileMut<T, R> {
+        VolatileMut::<T, RW>::with_rw::<R>(self)
+    }
+}
+
+impl<E, RW: RWT> WithRW for ElemPtrs<E, Vol<RW>> {
+    type WithRW<R: RWT> = ElemPtrs<E, Vol<R>>;
+    #[inline(always)]
+    fn with_rw<R: RWT>(self) -> ElemPtrs<E, Vol<R>> {
+        ElemPtrs { base: self.base, range: self.range, _w: PhantomData }
     }
 }
 
@@ -818,12 +850,43 @@ macro_rules! raw_field {
         $crate::PtrIndex::project(len_struct, $idx, first)
     }};
 
-    ($base:expr, final mut $field:ident [$idx:expr]) => {
-        $crate::IntoVolatile::into_volatile($crate::raw_field!($base, mut $field [$idx]))
+    // Convert `final` modifiers into read-write types
+    (@rw) => { $crate::VolatileRW };
+    (@rw !) => { $crate::RegularRW };
+    (@rw +) => { $crate::UnalignedVolatileRW };
+    (@rw ! +) => { $crate::UnalignedRW };
+    (@rw + !) => { $crate::UnalignedRW };
+
+    // Wrap whatever the expression, in into_volatile with the indicated read-write type
+    (@wrap [$($m:tt)*] $e:expr) => {
+        $crate::WithRW::with_rw::<$crate::raw_field!(@rw $($m)*)>($crate::IntoVolatile::into_volatile($e))
     };
-    ($base:expr, final $field:ident [$idx:expr]) => {
-        $crate::IntoVolatile::into_volatile($crate::raw_field!($base, $field [$idx]))
+
+    // Everything that can appear after a `final`
+    (@final [$($m:tt)*] $base:expr,) => {
+        $crate::raw_field!(@wrap [$($m)*] $base)
     };
+    (@final [$($m:tt)*] $base:expr, mut $field:ident $([$idx:expr])?~, $($rest:tt)+) => {
+        compile_error!("`final` is only allowed on the last access of a chain")
+    };
+    (@final [$($m:tt)*] $base:expr, ldr $field:ident $([$idx:expr])?~, $($rest:tt)+) => {
+        compile_error!("`final` is only allowed on the last access of a chain")
+    };
+    (@final [$($m:tt)*] $base:expr, $field:ident $([$idx:expr])?~, $($rest:tt)+) => {
+        compile_error!("`final` is only allowed on the last access of a chain")
+    };
+    (@final [$($m:tt)*] $base:expr, $($access:tt)+) => {
+        $crate::raw_field!(@wrap [$($m)*] $crate::raw_field!($base, $($access)+))
+    };
+
+    // Extract just `final` and its modifiers. These have to come before every `$field:ident` arm,
+    // since `ident` also matches keywords like `final`.
+    ($base:expr, final ! + $($rest:tt)*) => { $crate::raw_field!(@final [! +] $base, $($rest)*) };
+    ($base:expr, final + ! $($rest:tt)*) => { $crate::raw_field!(@final [+ !] $base, $($rest)*) };
+    ($base:expr, final ! $($rest:tt)*) => { $crate::raw_field!(@final [!] $base, $($rest)*) };
+    ($base:expr, final + $($rest:tt)*) => { $crate::raw_field!(@final [+] $base, $($rest)*) };
+    ($base:expr, final $($rest:tt)*) => { $crate::raw_field!(@final [] $base, $($rest)*) };
+
     ($base:expr, mut $field:ident [$idx:expr]) => {{
         #[allow(unused_unsafe)] unsafe { $crate::raw_field!(@index $idx, &raw mut (*($base)).$field) }
     }};
@@ -831,27 +894,15 @@ macro_rules! raw_field {
         #[allow(unused_unsafe)] unsafe { $crate::raw_field!(@index $idx, &raw const (*($base)).$field) }
     }};
 
-    ($base:expr, final ldr $field:ident [$idx:expr]) => {
-        $crate::IntoVolatile::into_volatile($crate::raw_field!($base, ldr $field [$idx]))
-    };
     ($base:expr, ldr $field:ident [$idx:expr]) => {{
         if false { $crate::__ldr_index(&$idx); }
         $crate::read($crate::raw_field!($base, $field [$idx]))
     }};
 
-    ($base:expr, final ldr $field:ident) => {
-        $crate::IntoVolatile::into_volatile($crate::raw_field!($base, ldr $field))
-    };
     ($base:expr, ldr $field:ident) => {
         $crate::read($crate::raw_field!($base, $field))
     };
 
-    ($base:expr, final mut $field:ident) => {
-        $crate::VolatileMut::new(#[allow(unused_unsafe)] unsafe { &raw mut (*($base)).$field })
-    };
-    ($base:expr, final $field:ident) => {
-        $crate::Volatile::new(#[allow(unused_unsafe)] unsafe { &raw const (*($base)).$field })
-    };
     ($base:expr, mut $field:ident) => {{
         #[allow(unused_unsafe)] unsafe { &raw mut (*($base)).$field }
     }};
@@ -861,6 +912,15 @@ macro_rules! raw_field {
 
     // Chaining arms: peel off the first access (which must not be `final` or a range)
     // and then feed its pointer back in as the base of the rest.
+    //
+    // We can have a range right before a standalone `final`, so these two arms deliberately skip the
+    // single-index check when `final` comes next. They *have* to come before the general ones below.
+    ($base:expr, mut $field:ident [$idx:expr]~, final $($rest:tt)*) => {
+        $crate::raw_field!($crate::raw_field!($base, mut $field [$idx]), final $($rest)*)
+    };
+    ($base:expr, $field:ident [$idx:expr]~, final $($rest:tt)*) => {
+        $crate::raw_field!($crate::raw_field!($base, $field [$idx]), final $($rest)*)
+    };
     ($base:expr, mut $field:ident [$idx:expr]~, $($rest:tt)+) => {
         $crate::raw_field!({
             if false { $crate::__single_index(&$idx); }
@@ -884,15 +944,6 @@ macro_rules! raw_field {
     };
     ($base:expr, $field:ident~, $($rest:tt)+) => {
         $crate::raw_field!($crate::raw_field!($base, $field), $($rest)+)
-    };
-    ($base:expr, final mut $field:ident $([$idx:expr])?~, $($rest:tt)+) => {
-        compile_error!("`final` is only allowed on the last access of a chain")
-    };
-    ($base:expr, final ldr $field:ident $([$idx:expr])?~, $($rest:tt)+) => {
-        compile_error!("`final` is only allowed on the last access of a chain")
-    };
-    ($base:expr, final $field:ident $([$idx:expr])?~, $($rest:tt)+) => {
-        compile_error!("`final` is only allowed on the last access of a chain")
     };
 }
 
