@@ -1,5 +1,5 @@
 [workspace]
 resolver = "3"
 members = ["xtask"]  # "arm7", "arm9", and projects under those cannot be included here since rust-analyzer does not support multi-target analysis in a single virtual workspace
-exclude = ["arm7/", "arm9/"]
+exclude = ["arm7/", "arm9/", "raw-traversal/"]
 default-members = ["xtask"]
