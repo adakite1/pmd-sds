@@ -685,12 +685,12 @@ macro_rules! raw_field {
     ($base:expr, final $field:ident [$idx:expr]) => {
         $crate::IntoVolatile::into_volatile($crate::raw_field!($base, $field [$idx]))
     };
-    ($base:expr, mut $field:ident [$idx:expr]) => {
-        $crate::raw_field!(@index $idx, &raw mut (*($base)).$field)
-    };
-    ($base:expr, $field:ident [$idx:expr]) => {
-        $crate::raw_field!(@index $idx, &raw const (*($base)).$field)
-    };
+    ($base:expr, mut $field:ident [$idx:expr]) => {{
+        #[allow(unused_unsafe)] unsafe { $crate::raw_field!(@index $idx, &raw mut (*($base)).$field) }
+    }};
+    ($base:expr, $field:ident [$idx:expr]) => {{
+        #[allow(unused_unsafe)] unsafe { $crate::raw_field!(@index $idx, &raw const (*($base)).$field) }
+    }};
 
     ($base:expr, final ldr $field:ident [$idx:expr]) => {
         $crate::IntoVolatile::into_volatile($crate::raw_field!($base, ldr $field [$idx]))
