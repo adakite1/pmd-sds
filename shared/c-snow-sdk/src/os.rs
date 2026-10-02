@@ -1,4 +1,4 @@
-use crate::{Global, consts::{HW_MAIN_MEM_DEBUGGER_OFFSET, OS_CONSOLE_DEV_CARD, OS_CONSOLE_NITRO, OS_CONSOLE_SIZE_4MB, OS_CONSOLE_SIZE_MASK, OSi_CONSOLE_NOT_DETECT}, cp15_size_encoding, linker_addr, set_cp15_region, sys::{HW_CARD_ROM_HEADER_SIZE, HW_DOWNLOAD_PARAMETER_SIZE, SYS_AREA_START, red::hw_red_reserved}};
+use crate::{Global, consts::{HW_MAIN_MEM_DEBUGGER_OFFSET, OS_CONSOLE_DEV_CARD, OS_CONSOLE_NITRO, OS_CONSOLE_SIZE_4MB, OS_CONSOLE_SIZE_MASK, OSi_CONSOLE_NOT_DETECT}, cp15_size_encoding, linker_addr, raw_field, set_cp15_region, sys::{HW_CARD_ROM_HEADER_SIZE, HW_DOWNLOAD_PARAMETER_SIZE, OSArenaInfo, SYS_AREA_ARENA_INFO_BUF, SYS_AREA_START, red::hw_red_reserved}};
 
 cfg_select! {
 armv5te => {
@@ -99,6 +99,22 @@ pub extern "C" fn OS_SetProtectionRegionsRetail() {
             enabled = true,
         );
     }
+}
+
+/*(asm-corpus-filename: OS_GetArenaHi, objdump-symbol-name: arm9_bin/OS_GetArenaHi)DONE('os_arena')*/
+#[inline(never)]
+#[unsafe(link_section = ".text.origaddr.0207A524")]
+#[unsafe(no_mangle)]
+pub extern "C" fn OS_GetArenaHi(arena_index: u32) -> u32 {
+    raw_field!(SYS_AREA_ARENA_INFO_BUF as *const OSArenaInfo, final hi[arena_index as usize]).get()
+}
+
+/*(asm-corpus-filename: OS_GetArenaLo, objdump-symbol-name: arm9_bin/OS_GetArenaLo)DONE('os_arena')*/
+#[inline(never)]
+#[unsafe(link_section = ".text.origaddr.0207A538")]
+#[unsafe(no_mangle)]
+pub extern "C" fn OS_GetArenaLo(arena_index: u32) -> u32 {
+    raw_field!(SYS_AREA_ARENA_INFO_BUF as *const OSArenaInfo, final lo[arena_index as usize]).get()
 }
 
 unsafe extern "C" {
@@ -223,6 +239,22 @@ pub extern "C" fn OS_GetInitArenaLo(arena_index: u32) -> u32 {
             linker_addr(&raw const __arm7_wram_base)
         },
     }
+}
+
+/*(asm-corpus-filename: OS_SetArenaHi, objdump-symbol-name: arm9_bin/OS_SetArenaHi)DONE('os_arena')*/
+#[inline(never)]
+#[unsafe(link_section = ".text.origaddr.0207A6D8")]
+#[unsafe(no_mangle)]
+pub extern "C" fn OS_SetArenaHi(arena_index: u32, new_hi: u32) {
+    raw_field!(SYS_AREA_ARENA_INFO_BUF as *mut OSArenaInfo, final mut hi[arena_index as usize]).set(new_hi);
+}
+
+/*(asm-corpus-filename: OS_SetArenaLo, objdump-symbol-name: arm9_bin/OS_SetArenaLo)DONE('os_arena')*/
+#[inline(never)]
+#[unsafe(link_section = ".text.origaddr.0207A6EC")]
+#[unsafe(no_mangle)]
+pub extern "C" fn OS_SetArenaLo(arena_index: u32, new_lo: u32) {
+    raw_field!(SYS_AREA_ARENA_INFO_BUF as *mut OSArenaInfo, final mut lo[arena_index as usize]).set(new_lo);
 }
 
 #[unsafe(link_section = ".data.origaddr.020B2BAC")]

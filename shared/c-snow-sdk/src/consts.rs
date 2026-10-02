@@ -1,3 +1,7 @@
+/* ARENA_SHARED.H */
+
+pub const OS_ARENA_MAX: usize = 9;
+
 /* CONSTS.H */
 
 pub const OSi_CONSOLE_NOT_DETECT: u32 = 0xFFFFFFFF;
