@@ -6,6 +6,8 @@ use crate::consts::OS_ARENA_MAX;
 
 pub const SYS_AREA_START: u32 = 0x027FF000;
 
+pub const OS_ARENA_SYS_AREA_SHARED: u32 = 5;
+
 pub const SYS_AREA_ARENA_INFO_BUF: u32 = SYS_AREA_START + 0xDA0;
 
 #[repr(C)]

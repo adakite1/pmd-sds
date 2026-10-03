@@ -1,6 +1,6 @@
 use raw_traversal::raw_field;
 
-use crate::{Global, consts::{HW_MAIN_MEM_DEBUGGER_OFFSET, OS_CONSOLE_DEV_CARD, OS_CONSOLE_NITRO, OS_CONSOLE_SIZE_4MB, OS_CONSOLE_SIZE_MASK, OSi_CONSOLE_NOT_DETECT}, cp15_size_encoding, linker_addr, set_cp15_region, sys::{HW_CARD_ROM_HEADER_SIZE, HW_DOWNLOAD_PARAMETER_SIZE, OSArenaInfo, SYS_AREA_ARENA_INFO_BUF, SYS_AREA_START, red::hw_red_reserved}};
+use crate::{Global, consts::{HW_MAIN_MEM_DEBUGGER_OFFSET, OS_ARENA_DTCM, OS_ARENA_ITCM, OS_ARENA_MAIN, OS_ARENA_MAINEX, OS_ARENA_SYS_AREA_SHARED, OS_ARENA_WRAM_SHARED_ARM9, OS_CONSOLE_DEV_CARD, OS_CONSOLE_NITRO, OS_CONSOLE_SIZE_4MB, OS_CONSOLE_SIZE_MASK, OSi_CONSOLE_NOT_DETECT}, cp15_size_encoding, linker_addr, set_cp15_region, sys::{HW_CARD_ROM_HEADER_SIZE, HW_DOWNLOAD_PARAMETER_SIZE, OSArenaInfo, SYS_AREA_ARENA_INFO_BUF, SYS_AREA_START, red::hw_red_reserved}};
 
 cfg_select! {
 armv5te => {
@@ -24,6 +24,7 @@ pub extern "C" fn OS_Init() {
     //TODO:
 }
 
+/*(asm-corpus-filename: OS_InitArena, objdump-symbol-name: arm9_bin/OS_InitArena)DONE('os_arena', us, eu, jp)*/
 #[inline(never)]
 #[unsafe(link_section = ".text.origaddr.0207A3B4")]
 #[unsafe(no_mangle)]
@@ -33,14 +34,32 @@ pub extern "C" fn OS_InitArena() {
     }
     OSi_Initialized.set(1);
 
-    //TODO:
+    OS_SetArenaHi(OS_ARENA_MAIN, OS_GetInitArenaHi(OS_ARENA_MAIN));
+    OS_SetArenaLo(OS_ARENA_MAIN, OS_GetInitArenaLo(OS_ARENA_MAIN));
+
+    OS_SetArenaLo(OS_ARENA_MAINEX, 0);
+    OS_SetArenaHi(OS_ARENA_MAINEX, 0);
+
+    OS_SetArenaHi(OS_ARENA_ITCM, OS_GetInitArenaHi(OS_ARENA_ITCM));
+    OS_SetArenaLo(OS_ARENA_ITCM, OS_GetInitArenaLo(OS_ARENA_ITCM));
+
+    OS_SetArenaHi(OS_ARENA_DTCM, OS_GetInitArenaHi(OS_ARENA_DTCM));
+    OS_SetArenaLo(OS_ARENA_DTCM, OS_GetInitArenaLo(OS_ARENA_DTCM));
+
+    OS_SetArenaHi(OS_ARENA_SYS_AREA_SHARED, OS_GetInitArenaHi(OS_ARENA_SYS_AREA_SHARED));
+    OS_SetArenaLo(OS_ARENA_SYS_AREA_SHARED, OS_GetInitArenaLo(OS_ARENA_SYS_AREA_SHARED));
+
+    OS_SetArenaHi(OS_ARENA_WRAM_SHARED_ARM9, OS_GetInitArenaHi(OS_ARENA_WRAM_SHARED_ARM9));
+    OS_SetArenaLo(OS_ARENA_WRAM_SHARED_ARM9, OS_GetInitArenaLo(OS_ARENA_WRAM_SHARED_ARM9));
 }
 
+/*(asm-corpus-filename: OS_InitArenaEx, objdump-symbol-name: arm9_bin/OS_InitArenaEx)DONE('os_arena', us, eu, jp)*/
 #[inline(never)]
 #[unsafe(link_section = ".text.origaddr.0207A4B8")]
 #[unsafe(no_mangle)]
 pub extern "C" fn OS_InitArenaEx() {
-    //TODO:
+    OS_SetArenaHi(OS_ARENA_MAINEX, OS_GetInitArenaHi(OS_ARENA_MAINEX));
+    OS_SetArenaLo(OS_ARENA_MAINEX, OS_GetInitArenaLo(OS_ARENA_MAINEX));
 
     if OSi_MAINEX_ENABLE.get() == 0 || OS_GetConsoleType() & OS_CONSOLE_SIZE_MASK == OS_CONSOLE_SIZE_4MB {
         OS_SetProtectionRegionsRetail();

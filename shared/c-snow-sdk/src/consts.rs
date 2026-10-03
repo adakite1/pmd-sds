@@ -1,5 +1,14 @@
 /* ARENA_SHARED.H */
 
+pub const OS_ARENA_MAIN: u32 = 0;
+pub const OS_ARENA_MAIN_SUBPRIV: u32 = 1;
+pub const OS_ARENA_MAINEX: u32 = 2;
+pub const OS_ARENA_ITCM: u32 = 3;
+pub const OS_ARENA_DTCM: u32 = 4;
+pub use crate::sys::OS_ARENA_SYS_AREA_SHARED;
+pub const OS_ARENA_WRAM_SHARED_ARM9: u32 = 6;
+pub const OS_ARENA_WRAM_SHARED_ARM7: u32 = 7;
+pub const OS_ARENA_WRAM_SUBPRIV: u32 = 8;
 pub const OS_ARENA_MAX: usize = 9;
 
 /* CONSTS.H */
