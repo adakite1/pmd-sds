@@ -1,3 +1,6 @@
+pub use crate::sys::dtcm_sys::DTCM_TOP;
+pub use crate::sys::dtcm_sys::IRQ_CHECK_BITS;
+pub use crate::sys::dtcm_sys::IRQ_HANDLER_POINTER;
 pub const OSi_IRQ_CALLBACK_MAX: usize = 8;
 
 /* ARENA_SHARED.H */
