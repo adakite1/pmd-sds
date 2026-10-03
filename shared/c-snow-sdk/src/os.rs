@@ -1,6 +1,6 @@
 use raw_traversal::raw_field;
 
-use crate::{Global, consts::{HW_MAIN_MEM_DEBUGGER_OFFSET, OS_ARENA_DTCM, OS_ARENA_ITCM, OS_ARENA_MAIN, OS_ARENA_MAINEX, OS_ARENA_SYS_AREA_SHARED, OS_ARENA_WRAM_SHARED_ARM9, OS_CONSOLE_DEV_CARD, OS_CONSOLE_NITRO, OS_CONSOLE_SIZE_4MB, OS_CONSOLE_SIZE_MASK, OSi_CONSOLE_NOT_DETECT}, cp15_size_encoding, linker_addr, read, reg::{REG_IE, REG_IF, REG_IME}, set_cp15_region, write, sys::{HW_CARD_ROM_HEADER_SIZE, HW_DOWNLOAD_PARAMETER_SIZE, OSArenaInfo, SYS_AREA_ARENA_INFO_BUF, SYS_AREA_START, red::hw_red_reserved}};
+use crate::{Global, consts::{HW_MAIN_MEM_DEBUGGER_OFFSET, OSi_IRQ_CALLBACK_MAX, REG_OS_IE_D0_SHIFT, REG_OS_IE_D3_SHIFT, REG_OS_IE_T0_SHIFT, REG_OS_IE_T3_SHIFT, OS_ARENA_DTCM, OS_ARENA_ITCM, OS_ARENA_MAIN, OS_ARENA_MAINEX, OS_ARENA_SYS_AREA_SHARED, OS_ARENA_WRAM_SHARED_ARM9, OS_CONSOLE_DEV_CARD, OS_CONSOLE_NITRO, OS_CONSOLE_SIZE_4MB, OS_CONSOLE_SIZE_MASK, OSi_CONSOLE_NOT_DETECT}, cp15_size_encoding, linker_addr, read, reg::{REG_IE, REG_IF, REG_IME}, set_cp15_region, write, sys::{HW_CARD_ROM_HEADER_SIZE, HW_DOWNLOAD_PARAMETER_SIZE, OSArenaInfo, SYS_AREA_ARENA_INFO_BUF, SYS_AREA_START, red::hw_red_reserved}};
 
 #[repr(C)]
 pub struct OSThreadQueue {
@@ -9,6 +9,20 @@ pub struct OSThreadQueue {
 
     //TODO:
 }
+
+#[repr(C)]
+pub struct OSIrqCallbackInfo {
+    pub func: Option<extern "C" fn(*mut core::ffi::c_void)>,
+    pub enable: u32,
+    pub arg: *mut core::ffi::c_void,
+}
+
+#[repr(C)]
+pub struct OSIrqCallbackInfoTable {
+    pub dma_callbacks: [OSIrqCallbackInfo; REG_OS_IE_D3_SHIFT - REG_OS_IE_D0_SHIFT + 1],
+    pub timer_callbacks: [OSIrqCallbackInfo; REG_OS_IE_T3_SHIFT - REG_OS_IE_T0_SHIFT + 1],
+}
+const _: () = assert!(core::mem::size_of::<OSIrqCallbackInfoTable>() / core::mem::size_of::<OSIrqCallbackInfo>() == OSi_IRQ_CALLBACK_MAX);
 
 cfg_select! {
 armv5te => {
@@ -101,6 +115,31 @@ pub fn OS_RestoreIrq(enable: u16) -> u16 {
     let prev = read(REG_IME);
     write(REG_IME, enable);
     prev
+}
+
+/*(asm-corpus-filename: OSi_EnterDmaCallback, objdump-symbol-name: arm9_bin/OSi_EnterDmaCallback)DONE('os_interrupt', us, eu, jp)*/
+#[inline(never)]
+#[unsafe(link_section = ".text.origaddr.02078BAC")]
+#[unsafe(no_mangle)]
+pub extern "C" fn OSi_EnterDmaCallback(dma_no: u32, callback: Option<extern "C" fn(*mut core::ffi::c_void)>, arg: *mut core::ffi::c_void) {
+    let imask: u32 = 1 << (REG_OS_IE_D0_SHIFT as u32 + dma_no);
+    let info = raw_field!(OSi_IrqCallbackInfo.as_ptr(), mut dma_callbacks[dma_no as usize]);
+    raw_field!(info, final mut func).set(callback);
+    raw_field!(info, final mut arg).set(arg);
+    raw_field!(info, final mut enable).set(OS_EnableIrqMask(imask) & imask);
+}
+
+/*(asm-corpus-filename: OSi_EnterTimerCallback, objdump-symbol-name: arm9_bin/OSi_EnterTimerCallback)DONE('os_interrupt', us, eu, jp)*/
+#[inline(never)]
+#[unsafe(link_section = ".text.origaddr.02078BF4")]
+#[unsafe(no_mangle)]
+pub extern "C" fn OSi_EnterTimerCallback(timer_no: u32, callback: Option<extern "C" fn(*mut core::ffi::c_void)>, arg: *mut core::ffi::c_void) {
+    let imask: u32 = 1 << (REG_OS_IE_T0_SHIFT as u32 + timer_no);
+    let info = raw_field!(OSi_IrqCallbackInfo.as_ptr(), mut timer_callbacks[timer_no as usize]);
+    raw_field!(info, final mut func).set(callback);
+    raw_field!(info, final mut arg).set(arg);
+    OS_EnableIrqMask(imask);
+    raw_field!(info, final mut enable).set(1);
 }
 
 /*(asm-corpus-filename: OS_SetIrqMask, objdump-symbol-name: arm9_bin/OS_SetIrqMask)DONE('os_interrupt')*/
@@ -435,6 +474,24 @@ pub extern "C" fn OS_SetArenaLo(arena_index: u32, new_lo: u32) {
 
 #[unsafe(link_section = ".data.origaddr.020B2BAC")]
 pub static OSi_ConsoleTypeCache: Global<u32> = Global::new(OSi_CONSOLE_NOT_DETECT);
+
+#[unsafe(link_section = ".bss.origaddr.022B95E4")]
+pub static OSi_IrqCallbackInfo: Global<OSIrqCallbackInfoTable> = Global::new(OSIrqCallbackInfoTable {
+    dma_callbacks: [const {
+        OSIrqCallbackInfo {
+            func: None,
+            enable: 0,
+            arg: core::ptr::null_mut(),
+        }
+    }; REG_OS_IE_D3_SHIFT - REG_OS_IE_D0_SHIFT + 1],
+    timer_callbacks: [const {
+        OSIrqCallbackInfo {
+            func: None,
+            enable: 0,
+            arg: core::ptr::null_mut(),
+        }
+    }; REG_OS_IE_T3_SHIFT - REG_OS_IE_T0_SHIFT + 1],
+});
 
 #[unsafe(link_section = ".bss.origaddr.022B98C4")]
 pub static OSi_Initialized: Global<u32> = Global::new(0);

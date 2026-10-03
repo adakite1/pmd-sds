@@ -1,3 +1,5 @@
+pub const OSi_IRQ_CALLBACK_MAX: usize = 8;
+
 /* ARENA_SHARED.H */
 
 pub const OS_ARENA_MAIN: u32 = 0;
@@ -23,6 +25,14 @@ pub const OS_CONSOLE_SIZE_4MB: u32 = 0x00000001;
 /* ARM9/IO_REG.H */
 
 pub const REG_OS_IE_GF_SHIFT: usize = 21;
+
+pub const REG_OS_IE_D3_SHIFT: usize = 11;
+
+pub const REG_OS_IE_D0_SHIFT: usize = 8;
+
+pub const REG_OS_IE_T3_SHIFT: usize = 6;
+
+pub const REG_OS_IE_T0_SHIFT: usize = 3;
 
 /* MMAP.H */
 
