@@ -67,6 +67,12 @@ pub fn align_sp_0_mod_8() {
     }
 }
 
+/// Ensures SP ≡ 4 (mod 8), so that pushing an odd-number of words onto
+/// the stack will land SP on an 8-byte boundary, satisfying AAPCS.
+macro_rules! align_sp_4_mod_8 {
+    () => { "tst sp, #4\nsubeq sp, sp, #4" };
+}
+
 #[inline(always)]
 fn init_banked_stacks() {
     unsafe {
@@ -79,6 +85,12 @@ fn init_banked_stacks() {
             "msr CPSR_c, {irq_mode}",
             "ldr r0, ={irq_top}",
             "mov sp, r0",
+            // The original ARM7 seems to run code with APCS, which only
+            // required 4-byte stack alignment, but we're on LLVM which
+            // expects AAPCS. Since the interrupt handler needs to push at least
+            // one item onto the stack, we need to pre-compensate just like the ARM9,
+            // while the original game gets away with not doing so.
+            align_sp_4_mod_8!(),
             "ldr r1, ={irq_size}",
             "sub r1, r0, r1",
 
