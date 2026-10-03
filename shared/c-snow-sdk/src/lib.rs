@@ -11,6 +11,8 @@ use utils::prelude::*;
 
 pub mod consts;
 
+pub mod reg;
+
 pub mod dtcm;
 
 pub mod os;

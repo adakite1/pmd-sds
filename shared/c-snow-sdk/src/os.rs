@@ -1,6 +1,6 @@
 use raw_traversal::raw_field;
 
-use crate::{Global, consts::{HW_MAIN_MEM_DEBUGGER_OFFSET, OS_ARENA_DTCM, OS_ARENA_ITCM, OS_ARENA_MAIN, OS_ARENA_MAINEX, OS_ARENA_SYS_AREA_SHARED, OS_ARENA_WRAM_SHARED_ARM9, OS_CONSOLE_DEV_CARD, OS_CONSOLE_NITRO, OS_CONSOLE_SIZE_4MB, OS_CONSOLE_SIZE_MASK, OSi_CONSOLE_NOT_DETECT}, cp15_size_encoding, linker_addr, set_cp15_region, write, sys::{HW_CARD_ROM_HEADER_SIZE, HW_DOWNLOAD_PARAMETER_SIZE, OSArenaInfo, SYS_AREA_ARENA_INFO_BUF, SYS_AREA_START, red::hw_red_reserved}};
+use crate::{Global, consts::{HW_MAIN_MEM_DEBUGGER_OFFSET, OS_ARENA_DTCM, OS_ARENA_ITCM, OS_ARENA_MAIN, OS_ARENA_MAINEX, OS_ARENA_SYS_AREA_SHARED, OS_ARENA_WRAM_SHARED_ARM9, OS_CONSOLE_DEV_CARD, OS_CONSOLE_NITRO, OS_CONSOLE_SIZE_4MB, OS_CONSOLE_SIZE_MASK, OSi_CONSOLE_NOT_DETECT}, cp15_size_encoding, linker_addr, read, reg::{REG_IE, REG_IF, REG_IME}, set_cp15_region, write, sys::{HW_CARD_ROM_HEADER_SIZE, HW_DOWNLOAD_PARAMETER_SIZE, OSArenaInfo, SYS_AREA_ARENA_INFO_BUF, SYS_AREA_START, red::hw_red_reserved}};
 
 #[repr(C)]
 pub struct OSThreadQueue {
@@ -87,6 +87,68 @@ pub extern "C" fn OSi_IrqTimer3() {
 pub extern "C" fn OS_InitIrqTable() {
     raw_field!(OSi_IrqThreadQueue.as_ptr(), final mut tail).set(core::ptr::null_mut());
     raw_field!(OSi_IrqThreadQueue.as_ptr(), final mut head).set(core::ptr::null_mut());
+}
+
+#[inline(always)]
+pub fn OS_DisableIrq() -> u16 {
+    let prev = read(REG_IME);
+    write(REG_IME, 0);
+    prev
+}
+
+#[inline(always)]
+pub fn OS_RestoreIrq(enable: u16) -> u16 {
+    let prev = read(REG_IME);
+    write(REG_IME, enable);
+    prev
+}
+
+/*(asm-corpus-filename: OS_SetIrqMask, objdump-symbol-name: arm9_bin/OS_SetIrqMask)DONE('os_interrupt')*/
+#[inline(never)]
+#[unsafe(link_section = ".text.origaddr.02078C3C")]
+#[unsafe(no_mangle)]
+pub extern "C" fn OS_SetIrqMask(mask: u32) -> u32 {
+    let ime = OS_DisableIrq();
+    let prev = read(REG_IE);
+    write(REG_IE, mask);
+    OS_RestoreIrq(ime); //NOTE: An extra ldrh r0, [r2] (like in the original asm) here because the read in OS_RestoreIrq is volatile even if the read value is not used
+    prev
+}
+
+/*(asm-corpus-filename: OS_EnableIrqMask, objdump-symbol-name: arm9_bin/OS_EnableIrqMask)DONE('os_interrupt')*/
+#[inline(never)]
+#[unsafe(link_section = ".text.origaddr.02078C68")]
+#[unsafe(no_mangle)]
+pub extern "C" fn OS_EnableIrqMask(mask: u32) -> u32 {
+    let ime = OS_DisableIrq();
+    let prev = read(REG_IE);
+    write(REG_IE, prev | mask);
+    OS_RestoreIrq(ime);
+    prev
+}
+
+/*(asm-corpus-filename: OS_DisableIrqMask, objdump-symbol-name: arm9_bin/OS_DisableIrqMask)DONE('os_interrupt')*/
+#[inline(never)]
+#[unsafe(link_section = ".text.origaddr.02078C98")]
+#[unsafe(no_mangle)]
+pub extern "C" fn OS_DisableIrqMask(mask: u32) -> u32 {
+    let ime = OS_DisableIrq();
+    let prev = read(REG_IE);
+    write(REG_IE, prev & !mask);
+    OS_RestoreIrq(ime);
+    prev
+}
+
+/*(asm-corpus-filename: OS_ResetRequestIrqMask, objdump-symbol-name: arm9_bin/OS_ResetRequestIrqMask)DONE('os_interrupt')*/
+#[inline(never)]
+#[unsafe(link_section = ".text.origaddr.02078CC8")]
+#[unsafe(no_mangle)]
+pub extern "C" fn OS_ResetRequestIrqMask(mask: u32) -> u32 {
+    let ime = OS_DisableIrq();
+    let prev = read(REG_IF);
+    write(REG_IF, mask);
+    OS_RestoreIrq(ime);
+    prev
 }
 
 /*(asm-corpus-filename: OS_SetIrqStackChecker, objdump-symbol-name: arm9_bin/OS_SetIrqStackChecker)DONE('os_interrupt')*/
