@@ -1,6 +1,6 @@
 use raw_traversal::raw_field;
 
-use crate::{Global, consts::{HW_MAIN_MEM_DEBUGGER_OFFSET, REG_OS_IE_GF_SHIFT, OSi_IRQ_CALLBACK_MAX, REG_OS_IE_D0_SHIFT, REG_OS_IE_D3_SHIFT, REG_OS_IE_T0_SHIFT, REG_OS_IE_T3_SHIFT, OS_ARENA_DTCM, OS_ARENA_ITCM, OS_ARENA_MAIN, OS_ARENA_MAINEX, OS_ARENA_SYS_AREA_SHARED, OS_ARENA_WRAM_SHARED_ARM9, OS_CONSOLE_DEV_CARD, OS_CONSOLE_NITRO, OS_CONSOLE_SIZE_4MB, OS_CONSOLE_SIZE_MASK, OSi_CONSOLE_NOT_DETECT}, cp15_size_encoding, linker_addr, read, reg::{REG_IE, REG_IF, REG_IME}, set_cp15_region, write, sys::{HW_CARD_ROM_HEADER_SIZE, HW_DOWNLOAD_PARAMETER_SIZE, OSArenaInfo, SYS_AREA_ARENA_INFO_BUF, SYS_AREA_START, red::hw_red_reserved}};
+use crate::{Global, consts::{DMA_CHANNELS_COUNT, TIMERS_COUNT, HW_MAIN_MEM_DEBUGGER_OFFSET, REG_OS_IE_GF_SHIFT, OSi_IRQ_CALLBACK_MAX, REG_OS_IE_D0_SHIFT, REG_OS_IE_D3_SHIFT, REG_OS_IE_T0_SHIFT, REG_OS_IE_T3_SHIFT, OS_ARENA_DTCM, OS_ARENA_ITCM, OS_ARENA_MAIN, OS_ARENA_MAINEX, OS_ARENA_SYS_AREA_SHARED, OS_ARENA_WRAM_SHARED_ARM9, OS_CONSOLE_DEV_CARD, OS_CONSOLE_NITRO, OS_CONSOLE_SIZE_4MB, OS_CONSOLE_SIZE_MASK, OSi_CONSOLE_NOT_DETECT}, cp15_size_encoding, linker_addr, read, reg::{REG_IE, REG_IF, REG_IME}, set_cp15_region, write, sys::{dtcm_sys::IRQ_FUTEX_BITS, HW_CARD_ROM_HEADER_SIZE, HW_DOWNLOAD_PARAMETER_SIZE, OSArenaInfo, SYS_AREA_ARENA_INFO_BUF, SYS_AREA_START, red::hw_red_reserved}};
 
 #[repr(C)]
 pub struct OSThreadQueue {
@@ -17,10 +17,17 @@ pub struct OSIrqCallbackInfo {
     pub arg: *mut core::ffi::c_void,
 }
 
+/// Different view of the same data as [`OSIrqCallbackInfoTable`]
+#[repr(C)]
+pub struct OSIrqCallbackInfoList {
+    pub callbacks: [OSIrqCallbackInfo; DMA_CHANNELS_COUNT + TIMERS_COUNT],
+}
+const _: () = assert!(core::mem::size_of::<OSIrqCallbackInfoList>() / core::mem::size_of::<OSIrqCallbackInfo>() == OSi_IRQ_CALLBACK_MAX);
+
 #[repr(C)]
 pub struct OSIrqCallbackInfoTable {
-    pub dma_callbacks: [OSIrqCallbackInfo; REG_OS_IE_D3_SHIFT - REG_OS_IE_D0_SHIFT + 1],
-    pub timer_callbacks: [OSIrqCallbackInfo; REG_OS_IE_T3_SHIFT - REG_OS_IE_T0_SHIFT + 1],
+    pub dma_callbacks: [OSIrqCallbackInfo; DMA_CHANNELS_COUNT],
+    pub timer_callbacks: [OSIrqCallbackInfo; TIMERS_COUNT],
 }
 const _: () = assert!(core::mem::size_of::<OSIrqCallbackInfoTable>() / core::mem::size_of::<OSIrqCallbackInfo>() == OSi_IRQ_CALLBACK_MAX);
 
@@ -31,6 +38,7 @@ armv5te => {
 
 use crate::dtcm::{OS_IRQTable, OSi_IrqThreadQueue};
 
+/*(asm-corpus-filename: OS_IrqDummy, objdump-symbol-name: arm9_bin/OS_IrqDummy)DONE('os_irqTable')*/
 #[inline(never)]
 #[unsafe(link_section = ".text.origaddr.02078974")]
 #[unsafe(no_mangle)]
@@ -38,60 +46,80 @@ pub extern "C" fn OS_IrqDummy() {
     
 }
 
+/*(asm-corpus-filename: OSi_IrqCallback, objdump-symbol-name: arm9_bin/OSi_IrqCallback)DONE('os_irqTable', us, eu, jp)*/
+#[inline(never)]
+#[unsafe(link_section = ".text.origaddr.02078978")]
+#[unsafe(no_mangle)]
+pub extern "C" fn OSi_IrqCallback(index: u32) {
+    let info = raw_field!(OSi_IrqCallbackInfo.as_ptr().cast::<OSIrqCallbackInfoList>(), mut callbacks[index as usize]);
+    let func = raw_field!(info, final mut func).get();
+    raw_field!(info, final mut func).set(None);
+    let mask: u32 = 1 << raw_field!(&raw const DYNAMIC_CALLBACK_INDEX_TO_BOUND_IRQ_INDEX, final [index as usize]).get();
+    if let Some(func) = func {
+        func(raw_field!(info, final arg).get());
+    }
+    write(IRQ_FUTEX_BITS as *mut u32, read(IRQ_FUTEX_BITS as *const u32) | mask);
+    if raw_field!(info, final enable).get() == 0 {
+        OS_DisableIrqMask(mask);
+    }
+}
+
+/*(asm-corpus-filename: [OSi_IrqDma0, OSi_IrqDma1, OSi_IrqDma2, OSi_IrqDma3], objdump-symbol-name: [arm9_bin/OSi_IrqDma0, arm9_bin/OSi_IrqDma1, arm9_bin/OSi_IrqDma2, arm9_bin/OSi_IrqDma3])DONE('os_irqTable', us, eu, jp)*/
 #[inline(never)]
 #[unsafe(link_section = ".text.origaddr.02078A00")]
 #[unsafe(no_mangle)]
 pub extern "C" fn OSi_IrqDma0() {
-    
+    OSi_IrqCallback(0);
 }
 
 #[inline(never)]
 #[unsafe(link_section = ".text.origaddr.02078A10")]
 #[unsafe(no_mangle)]
 pub extern "C" fn OSi_IrqDma1() {
-    
+    OSi_IrqCallback(1);
 }
 
 #[inline(never)]
 #[unsafe(link_section = ".text.origaddr.02078A20")]
 #[unsafe(no_mangle)]
 pub extern "C" fn OSi_IrqDma2() {
-    
+    OSi_IrqCallback(2);
 }
 
 #[inline(never)]
 #[unsafe(link_section = ".text.origaddr.02078A30")]
 #[unsafe(no_mangle)]
 pub extern "C" fn OSi_IrqDma3() {
-    
+    OSi_IrqCallback(3);
 }
 
+/*(asm-corpus-filename: [OSi_IrqTimer0, OSi_IrqTimer1, OSi_IrqTimer2, OSi_IrqTimer3], objdump-symbol-name: [arm9_bin/OSi_IrqTimer0, arm9_bin/OSi_IrqTimer1, arm9_bin/OSi_IrqTimer2, arm9_bin/OSi_IrqTimer3])DONE('os_irqTable', us, eu, jp)*/
 #[inline(never)]
 #[unsafe(link_section = ".text.origaddr.02078A40")]
 #[unsafe(no_mangle)]
 pub extern "C" fn OSi_IrqTimer0() {
-    
+    OSi_IrqCallback(DMA_CHANNELS_COUNT as u32);
 }
 
 #[inline(never)]
 #[unsafe(link_section = ".text.origaddr.02078A50")]
 #[unsafe(no_mangle)]
 pub extern "C" fn OSi_IrqTimer1() {
-    
+    OSi_IrqCallback(DMA_CHANNELS_COUNT as u32 + 1);
 }
 
 #[inline(never)]
 #[unsafe(link_section = ".text.origaddr.02078A60")]
 #[unsafe(no_mangle)]
 pub extern "C" fn OSi_IrqTimer2() {
-    
+    OSi_IrqCallback(DMA_CHANNELS_COUNT as u32 + 2);
 }
 
 #[inline(never)]
 #[unsafe(link_section = ".text.origaddr.02078A70")]
 #[unsafe(no_mangle)]
 pub extern "C" fn OSi_IrqTimer3() {
-    
+    OSi_IrqCallback(DMA_CHANNELS_COUNT as u32 + 3);
 }
 
 /*(asm-corpus-filename: OS_InitIrqTable, objdump-symbol-name: arm9_bin/OS_InitIrqTable)DONE('os_interrupt')*/
@@ -515,6 +543,18 @@ pub extern "C" fn OS_SetArenaLo(arena_index: u32, new_lo: u32) {
     raw_field!(SYS_AREA_ARENA_INFO_BUF as *mut OSArenaInfo, final mut lo[arena_index as usize]).set(new_lo);
 }
 
+#[unsafe(link_section = ".rodata.origaddr.020B2B9C")]
+pub static DYNAMIC_CALLBACK_INDEX_TO_BOUND_IRQ_INDEX: [u16; OSi_IRQ_CALLBACK_MAX] = [
+    REG_OS_IE_D0_SHIFT as u16,
+    REG_OS_IE_D0_SHIFT as u16 + 1,
+    REG_OS_IE_D0_SHIFT as u16 + 2,
+    REG_OS_IE_D0_SHIFT as u16 + 3,
+    REG_OS_IE_T0_SHIFT as u16,
+    REG_OS_IE_T0_SHIFT as u16 + 1,
+    REG_OS_IE_T0_SHIFT as u16 + 2,
+    REG_OS_IE_T0_SHIFT as u16 + 3,
+];
+
 #[unsafe(link_section = ".data.origaddr.020B2BAC")]
 pub static OSi_ConsoleTypeCache: Global<u32> = Global::new(OSi_CONSOLE_NOT_DETECT);
 
@@ -526,14 +566,14 @@ pub static OSi_IrqCallbackInfo: Global<OSIrqCallbackInfoTable> = Global::new(OSI
             enable: 0,
             arg: core::ptr::null_mut(),
         }
-    }; REG_OS_IE_D3_SHIFT - REG_OS_IE_D0_SHIFT + 1],
+    }; DMA_CHANNELS_COUNT],
     timer_callbacks: [const {
         OSIrqCallbackInfo {
             func: None,
             enable: 0,
             arg: core::ptr::null_mut(),
         }
-    }; REG_OS_IE_T3_SHIFT - REG_OS_IE_T0_SHIFT + 1],
+    }; TIMERS_COUNT],
 });
 
 #[unsafe(link_section = ".bss.origaddr.022B98C4")]

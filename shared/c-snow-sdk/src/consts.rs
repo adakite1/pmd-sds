@@ -1,7 +1,9 @@
+pub const DMA_CHANNELS_COUNT: usize = REG_OS_IE_D3_SHIFT - REG_OS_IE_D0_SHIFT + 1;
 pub use crate::sys::dtcm_sys::DTCM_TOP;
-pub use crate::sys::dtcm_sys::IRQ_CHECK_BITS;
+pub use crate::sys::dtcm_sys::IRQ_FUTEX_BITS;
 pub use crate::sys::dtcm_sys::IRQ_HANDLER_POINTER;
 pub const OSi_IRQ_CALLBACK_MAX: usize = 8;
+pub const TIMERS_COUNT: usize = REG_OS_IE_T3_SHIFT - REG_OS_IE_T0_SHIFT + 1;
 
 /* ARENA_SHARED.H */
 
