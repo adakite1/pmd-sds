@@ -20,6 +20,10 @@ pub const OS_CONSOLE_DEV_CARD: u32 = 0x02000000;
 pub const OS_CONSOLE_SIZE_MASK: u32 = 0x00000003;
 pub const OS_CONSOLE_SIZE_4MB: u32 = 0x00000001;
 
+/* ARM9/IO_REG.H */
+
+pub const REG_OS_IE_GF_SHIFT: usize = 21;
+
 /* MMAP.H */
 
 /// Beyond this is private memory reserved for the hardware debugger when the game is
