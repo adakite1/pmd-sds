@@ -689,13 +689,13 @@ macro_rules! raw_field {
     (@final [$($m:tt)*] $base:expr, mut $field:ident $([$idx:expr])?~, $($rest:tt)+) => {
         compile_error!("`final` is only allowed on the last access of a chain")
     };
-    (@final [$($m:tt)*] $base:expr, ldr $(!)? $(+)? $field:ident $([$idx:expr])?~, $($rest:tt)+) => {
+    (@final [$($m:tt)*] $base:expr, ldr $(!)? $(+)? $($field:ident)? $([$idx:expr])?~, $($rest:tt)+) => {
         compile_error!("`final` is only allowed on the last access of a chain")
     };
-    (@final [$($m:tt)*] $base:expr, ldr + ! $field:ident $([$idx:expr])?~, $($rest:tt)+) => {
+    (@final [$($m:tt)*] $base:expr, ldr + ! $($field:ident)? $([$idx:expr])?~, $($rest:tt)+) => {
         compile_error!("`final` is only allowed on the last access of a chain")
     };
-    (@final [$($m:tt)*] $base:expr, $field:ident $([$idx:expr])?~, $($rest:tt)+) => {
+    (@final [$($m:tt)*] $base:expr, $($field:ident)? $([$idx:expr])?~, $($rest:tt)+) => {
         compile_error!("`final` is only allowed on the last access of a chain")
     };
     (@final [$($m:tt)*] $base:expr, $($access:tt)+) => {
@@ -703,6 +703,14 @@ macro_rules! raw_field {
     };
 
     // Everything that can appear after an `ldr`
+    (@ldr [$($m:tt)*] $base:expr, [$idx:expr]~, $($rest:tt)+) => {
+        $crate::raw_field!($crate::raw_field!(@ldr [$($m)*] $base, [$idx]), $($rest)+)
+    };
+    (@ldr [$($m:tt)*] $base:expr, [$idx:expr]) => {{
+        if false { $crate::__ldr_index(&$idx); }
+        let ptr = $crate::raw_field!($base, [$idx]);
+        #[allow(unused_unsafe)] unsafe { <$crate::raw_field!(@rw $($m)*) as $crate::RWT>::read(ptr) }
+    }};
     (@ldr [$($m:tt)*] $base:expr, $field:ident [$idx:expr]~, $($rest:tt)+) => {
         $crate::raw_field!($crate::raw_field!(@ldr [$($m)*] $base, $field [$idx]), $($rest)+)
     };
@@ -733,7 +741,14 @@ macro_rules! raw_field {
     ($base:expr, ldr ! $($rest:tt)+) => { $crate::raw_field!(@ldr [!] $base, $($rest)+) };
     ($base:expr, ldr + $($rest:tt)+) => { $crate::raw_field!(@ldr [+] $base, $($rest)+) };
     ($base:expr, ldr $field:ident $($rest:tt)*) => { $crate::raw_field!(@ldr [] $base, $field $($rest)*) };
+    ($base:expr, ldr [$idx:expr] $($rest:tt)*) => { $crate::raw_field!(@ldr [] $base, [$idx] $($rest)*) };
 
+    ($base:expr, mut [$idx:expr] $($rest:tt)*) => {
+        compile_error!("bare indexing does not take `mut` because mutability comes from the previous raw pointer itself")
+    };
+    ($base:expr, [$idx:expr]) => {
+        $crate::raw_field!(@index $idx, $base)
+    };
     ($base:expr, mut $field:ident [$idx:expr]) => {{
         #[allow(unused_unsafe)] unsafe { $crate::raw_field!(@index $idx, &raw mut (*($base)).$field) }
     }};
@@ -753,6 +768,15 @@ macro_rules! raw_field {
     //
     // We can have a range right before a standalone `final`, so these two arms deliberately skip the
     // single-index check when `final` comes next. They *have* to come before the general ones below.
+    ($base:expr, [$idx:expr]~, final $($rest:tt)*) => {
+        $crate::raw_field!($crate::raw_field!($base, [$idx]), final $($rest)*)
+    };
+    ($base:expr, [$idx:expr]~, $($rest:tt)+) => {
+        $crate::raw_field!({
+            if false { $crate::__single_index(&$idx); }
+            $crate::raw_field!($base, [$idx])
+        }, $($rest)+)
+    };
     ($base:expr, mut $field:ident [$idx:expr]~, final $($rest:tt)*) => {
         $crate::raw_field!($crate::raw_field!($base, mut $field [$idx]), final $($rest)*)
     };
