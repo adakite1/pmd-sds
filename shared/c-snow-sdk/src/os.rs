@@ -1,6 +1,6 @@
 use raw_traversal::raw_field;
 
-use crate::{Global, consts::{HW_MAIN_MEM_DEBUGGER_OFFSET, OSi_IRQ_CALLBACK_MAX, REG_OS_IE_D0_SHIFT, REG_OS_IE_D3_SHIFT, REG_OS_IE_T0_SHIFT, REG_OS_IE_T3_SHIFT, OS_ARENA_DTCM, OS_ARENA_ITCM, OS_ARENA_MAIN, OS_ARENA_MAINEX, OS_ARENA_SYS_AREA_SHARED, OS_ARENA_WRAM_SHARED_ARM9, OS_CONSOLE_DEV_CARD, OS_CONSOLE_NITRO, OS_CONSOLE_SIZE_4MB, OS_CONSOLE_SIZE_MASK, OSi_CONSOLE_NOT_DETECT}, cp15_size_encoding, linker_addr, read, reg::{REG_IE, REG_IF, REG_IME}, set_cp15_region, write, sys::{HW_CARD_ROM_HEADER_SIZE, HW_DOWNLOAD_PARAMETER_SIZE, OSArenaInfo, SYS_AREA_ARENA_INFO_BUF, SYS_AREA_START, red::hw_red_reserved}};
+use crate::{Global, consts::{HW_MAIN_MEM_DEBUGGER_OFFSET, REG_OS_IE_GF_SHIFT, OSi_IRQ_CALLBACK_MAX, REG_OS_IE_D0_SHIFT, REG_OS_IE_D3_SHIFT, REG_OS_IE_T0_SHIFT, REG_OS_IE_T3_SHIFT, OS_ARENA_DTCM, OS_ARENA_ITCM, OS_ARENA_MAIN, OS_ARENA_MAINEX, OS_ARENA_SYS_AREA_SHARED, OS_ARENA_WRAM_SHARED_ARM9, OS_CONSOLE_DEV_CARD, OS_CONSOLE_NITRO, OS_CONSOLE_SIZE_4MB, OS_CONSOLE_SIZE_MASK, OSi_CONSOLE_NOT_DETECT}, cp15_size_encoding, linker_addr, read, reg::{REG_IE, REG_IF, REG_IME}, set_cp15_region, write, sys::{HW_CARD_ROM_HEADER_SIZE, HW_DOWNLOAD_PARAMETER_SIZE, OSArenaInfo, SYS_AREA_ARENA_INFO_BUF, SYS_AREA_START, red::hw_red_reserved}};
 
 #[repr(C)]
 pub struct OSThreadQueue {
@@ -29,7 +29,7 @@ armv5te => {
 
 /* ====== ARM9 ====== */
 
-use crate::dtcm::OSi_IrqThreadQueue;
+use crate::dtcm::{OS_IRQTable, OSi_IrqThreadQueue};
 
 #[inline(never)]
 #[unsafe(link_section = ".text.origaddr.02078974")]
@@ -115,6 +115,49 @@ pub fn OS_RestoreIrq(enable: u16) -> u16 {
     let prev = read(REG_IME);
     write(REG_IME, enable);
     prev
+}
+
+/*(asm-corpus-filename: OS_SetIrqFunction, objdump-symbol-name: arm9_bin/OS_SetIrqFunction)DONE('os_interrupt', us, eu, jp)*/
+#[inline(never)]
+#[unsafe(link_section = ".text.origaddr.02078A98")]
+#[unsafe(no_mangle)]
+pub extern "C" fn OS_SetIrqFunction(mut mask: u32, function: Option<extern "C" fn()>) {
+    for i in 0..REG_OS_IE_GF_SHIFT + 1 {
+        if mask & 1 != 0 {
+            let info = match i {
+                REG_OS_IE_D0_SHIFT..=REG_OS_IE_D3_SHIFT => Some(raw_field!(OSi_IrqCallbackInfo.as_ptr(), mut dma_callbacks[i - REG_OS_IE_D0_SHIFT])),
+                REG_OS_IE_T0_SHIFT..=REG_OS_IE_T3_SHIFT => Some(raw_field!(OSi_IrqCallbackInfo.as_ptr(), mut timer_callbacks[i - REG_OS_IE_T0_SHIFT])),
+                _ => {
+                    raw_field!(OS_IRQTable.as_ptr(), final [i]).set(function);
+                    None
+                },
+            };
+            if let Some(info) = info {
+                raw_field!(info, final! mut func).set(unsafe { core::mem::transmute::<Option<extern "C" fn()>, Option<extern "C" fn(*mut core::ffi::c_void)>>(function) });
+                raw_field!(info, final! mut enable).set(1);
+                raw_field!(info, final! mut arg).set(core::ptr::null_mut());
+            }
+        }
+        mask >>= 1;
+    }
+}
+
+/*(asm-corpus-filename: OS_GetIrqFunction, objdump-symbol-name: arm9_bin/OS_GetIrqFunction)DONE('os_interrupt', us, eu, jp)*/
+#[inline(never)]
+#[unsafe(link_section = ".text.origaddr.02078B20")]
+#[unsafe(no_mangle)]
+pub extern "C" fn OS_GetIrqFunction(mut mask: u32) -> Option<extern "C" fn()> {
+    for i in 0..REG_OS_IE_GF_SHIFT + 1 {
+        if mask & 1 != 0 {
+            return match i {
+                REG_OS_IE_D0_SHIFT..=REG_OS_IE_D3_SHIFT => unsafe { core::mem::transmute::<Option<extern "C" fn(*mut core::ffi::c_void)>, Option<extern "C" fn()>>(raw_field!(OSi_IrqCallbackInfo.as_ptr(), dma_callbacks[i - REG_OS_IE_D0_SHIFT]~, final func).get()) },
+                REG_OS_IE_T0_SHIFT..=REG_OS_IE_T3_SHIFT => unsafe { core::mem::transmute::<Option<extern "C" fn(*mut core::ffi::c_void)>, Option<extern "C" fn()>>(raw_field!(OSi_IrqCallbackInfo.as_ptr(), timer_callbacks[i - REG_OS_IE_T0_SHIFT]~, final func).get()) },
+                _ => raw_field!(OS_IRQTable.as_ptr(), final [i]).get(),
+            };
+        }
+        mask >>= 1;
+    }
+    None
 }
 
 /*(asm-corpus-filename: OSi_EnterDmaCallback, objdump-symbol-name: arm9_bin/OSi_EnterDmaCallback)DONE('os_interrupt', us, eu, jp)*/
