@@ -1,6 +1,6 @@
 use raw_traversal::raw_field;
 
-use crate::{Global, consts::{HW_MAIN_MEM_DEBUGGER_OFFSET, OS_ARENA_DTCM, OS_ARENA_ITCM, OS_ARENA_MAIN, OS_ARENA_MAINEX, OS_ARENA_SYS_AREA_SHARED, OS_ARENA_WRAM_SHARED_ARM9, OS_CONSOLE_DEV_CARD, OS_CONSOLE_NITRO, OS_CONSOLE_SIZE_4MB, OS_CONSOLE_SIZE_MASK, OSi_CONSOLE_NOT_DETECT}, cp15_size_encoding, linker_addr, set_cp15_region, sys::{HW_CARD_ROM_HEADER_SIZE, HW_DOWNLOAD_PARAMETER_SIZE, OSArenaInfo, SYS_AREA_ARENA_INFO_BUF, SYS_AREA_START, red::hw_red_reserved}};
+use crate::{Global, consts::{HW_MAIN_MEM_DEBUGGER_OFFSET, OS_ARENA_DTCM, OS_ARENA_ITCM, OS_ARENA_MAIN, OS_ARENA_MAINEX, OS_ARENA_SYS_AREA_SHARED, OS_ARENA_WRAM_SHARED_ARM9, OS_CONSOLE_DEV_CARD, OS_CONSOLE_NITRO, OS_CONSOLE_SIZE_4MB, OS_CONSOLE_SIZE_MASK, OSi_CONSOLE_NOT_DETECT}, cp15_size_encoding, linker_addr, set_cp15_region, write, sys::{HW_CARD_ROM_HEADER_SIZE, HW_DOWNLOAD_PARAMETER_SIZE, OSArenaInfo, SYS_AREA_ARENA_INFO_BUF, SYS_AREA_START, red::hw_red_reserved}};
 
 #[repr(C)]
 pub struct OSThreadQueue {
@@ -87,6 +87,15 @@ pub extern "C" fn OSi_IrqTimer3() {
 pub extern "C" fn OS_InitIrqTable() {
     raw_field!(OSi_IrqThreadQueue.as_ptr(), final mut tail).set(core::ptr::null_mut());
     raw_field!(OSi_IrqThreadQueue.as_ptr(), final mut head).set(core::ptr::null_mut());
+}
+
+/*(asm-corpus-filename: OS_SetIrqStackChecker, objdump-symbol-name: arm9_bin/OS_SetIrqStackChecker)DONE('os_interrupt')*/
+#[inline(never)]
+#[unsafe(link_section = ".text.origaddr.02078CF4")]
+#[unsafe(no_mangle)]
+pub extern "C" fn OS_SetIrqStackChecker() {
+    write(linker_addr(&raw const __irq_stack_top) as *mut u32, 0xFDDB597D);
+    write(linker_addr(&raw const __irq_stack_bottom) as *mut u32, 0x7BF9DD5B);
 }
 
 /*(asm-corpus-filename: OS_GetConsoleType, objdump-symbol-name: arm9_bin/OS_GetConsoleType)DONE('os_emulator', us, eu, jp)*/
@@ -221,6 +230,8 @@ pub extern "C" fn OS_GetArenaLo(arena_index: u32) -> u32 {
 }
 
 unsafe extern "C" {
+    static __irq_stack_top: u8;
+    static __irq_stack_bottom: u8;
     static __main_ram_top_arm9: u8;
     static __main_ram_base: u8;
     static __itcm_heap_end: u8;
