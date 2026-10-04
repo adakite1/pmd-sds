@@ -160,6 +160,7 @@ struct Entry {
     first: usize,
     last: usize,
     section: Option<(String, usize)>,
+    others: Vec<(String, usize)>,
     label: Option<String>,
 }
 
@@ -241,6 +242,32 @@ fn label(item: &syn::Item) -> Option<String> {
     })
 }
 
+fn link_sections(item: &syn::Item) -> Vec<(String, usize)> {
+    let mut out = Vec::new();
+    for a in attrs(item) {
+        collect_link_sections(a.meta.to_token_stream(), &mut out);
+    }
+    out
+}
+
+fn collect_link_sections(tokens: TokenStream, out: &mut Vec<(String, usize)>) {
+    let trees: Vec<TokenTree> = tokens.into_iter().collect();
+    for (i, t) in trees.iter().enumerate() {
+        match t {
+            TokenTree::Ident(id) if id == "link_section" => {
+                if let (Some(TokenTree::Punct(eq)), Some(TokenTree::Literal(lit))) = (trees.get(i + 1), trees.get(i + 2))
+                    && eq.as_char() == '='
+                    && let Ok(s) = syn::parse2::<syn::LitStr>(lit.to_token_stream())
+                {
+                    out.push((s.value(), id.span().start().line - 1));
+                }
+            }
+            TokenTree::Group(g) => collect_link_sections(g.stream(), out),
+            _ => {}
+        }
+    }
+}
+
 fn link_section(tokens: TokenStream) -> Option<(String, usize)> {
     let trees: Vec<TokenTree> = tokens.into_iter().collect();
     for (i, t) in trees.iter().enumerate() {
@@ -297,6 +324,7 @@ fn collect(items: &[syn::Item], part: Part, label: String, lines: &[&str], out: 
                 first,
                 last: span.end().line - 1,
                 section: attrs(item).iter().find_map(|a| link_section(a.meta.to_token_stream())),
+                others: link_sections(item).into_iter().skip(1).collect(),
                 label: self::label(item),
             }
         })
@@ -423,11 +451,42 @@ pub fn lint(text: &str, rust: bool) -> Vec<(usize, String)> {
                             out.push((e.line(), format!("link_section {} is out of order in the {}; it {hint}", e.described(), c.label)));
                         }
                     }
+                    out.extend(secondary_warnings(c));
                 }
             }
         }
     }
     out.sort_by_key(|(l, _)| *l);
+    out
+}
+
+fn secondary_warnings(c: &Container) -> Vec<(usize, String)> {
+    let mut groups: Vec<(&str, Vec<(&str, usize, &Entry)>)> = Vec::new();
+    for e in &c.entries {
+        for (sec, line) in &e.others {
+            let Some(p) = prefix_of(sec) else { continue };
+            match groups.iter_mut().find(|(gp, _)| *gp == p) {
+                Some((_, g)) => g.push((sec.as_str(), *line, e)),
+                None => groups.push((p, vec![(sec.as_str(), *line, e)])),
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for (_, g) in groups {
+        let secs: Vec<&str> = g.iter().map(|(s, _, _)| *s).collect();
+        let keep = longest_increasing(&secs);
+        for ((sec, line, e), _) in g.iter().zip(&keep).filter(|(_, k)| !**k) {
+            let what = e.label.as_deref().unwrap_or("the item");
+            let first = e.sec();
+            out.push((
+                *line,
+                format!(
+                    "link_section \"{sec}\" does not agree with an earlier link_section on the same item about where to place {what} in the {}; the item is placed by \"{first}\", so this can't be fixed by reordering",
+                    c.label,
+                ),
+            ));
+        }
+    }
     out
 }
 
