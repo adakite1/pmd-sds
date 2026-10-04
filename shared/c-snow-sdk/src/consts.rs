@@ -3,6 +3,8 @@ pub use crate::sys::dtcm_sys::DTCM_TOP;
 pub use crate::sys::dtcm_sys::IRQ_FUTEX_BITS;
 pub use crate::sys::dtcm_sys::IRQ_HANDLER_POINTER;
 pub const OSi_IRQ_CALLBACK_MAX: usize = 8;
+pub use crate::sys::SYS_AREA_START;
+pub use crate::sys::SYS_AREA_SYSTEM_WORK;
 pub const TIMERS_COUNT: usize = REG_OS_IE_T3_SHIFT - REG_OS_IE_T0_SHIFT + 1;
 
 /* ARENA_SHARED.H */
@@ -17,6 +19,10 @@ pub const OS_ARENA_WRAM_SHARED_ARM9: u32 = 6;
 pub const OS_ARENA_WRAM_SHARED_ARM7: u32 = 7;
 pub const OS_ARENA_WRAM_SUBPRIV: u32 = 8;
 pub const OS_ARENA_MAX: usize = 9;
+
+/* ARMARCH.H */
+
+pub const HW_PSR_IRQ_DISABLE: u32 = 0x80;
 
 /* CONSTS.H */
 

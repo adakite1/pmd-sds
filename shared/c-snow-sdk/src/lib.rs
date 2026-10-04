@@ -9,6 +9,8 @@ use core::cell::UnsafeCell;
 
 use utils::prelude::*;
 
+pub mod asm;
+
 pub mod consts;
 
 pub mod reg;

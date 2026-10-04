@@ -1,6 +1,6 @@
 use raw_traversal::raw_field;
 
-use crate::{Global, consts::{DMA_CHANNELS_COUNT, TIMERS_COUNT, HW_MAIN_MEM_DEBUGGER_OFFSET, REG_OS_IE_GF_SHIFT, OSi_IRQ_CALLBACK_MAX, REG_OS_IE_D0_SHIFT, REG_OS_IE_D3_SHIFT, REG_OS_IE_T0_SHIFT, REG_OS_IE_T3_SHIFT, OS_ARENA_DTCM, OS_ARENA_ITCM, OS_ARENA_MAIN, OS_ARENA_MAINEX, OS_ARENA_SYS_AREA_SHARED, OS_ARENA_WRAM_SHARED_ARM9, OS_CONSOLE_DEV_CARD, OS_CONSOLE_NITRO, OS_CONSOLE_SIZE_4MB, OS_CONSOLE_SIZE_MASK, OSi_CONSOLE_NOT_DETECT}, cp15_size_encoding, linker_addr, read, reg::{REG_IE, REG_IF, REG_IME}, set_cp15_region, write, sys::{dtcm_sys::IRQ_FUTEX_BITS, HW_CARD_ROM_HEADER_SIZE, HW_DOWNLOAD_PARAMETER_SIZE, OSArenaInfo, SYS_AREA_ARENA_INFO_BUF, SYS_AREA_START, red::hw_red_reserved}};
+use crate::{Global, asm::{OS_CpuDisableIrq_ASM, OS_CpuRestoreIrq_ASM}, consts::{DMA_CHANNELS_COUNT, TIMERS_COUNT, HW_MAIN_MEM_DEBUGGER_OFFSET, REG_OS_IE_GF_SHIFT, OSi_IRQ_CALLBACK_MAX, REG_OS_IE_D0_SHIFT, REG_OS_IE_D3_SHIFT, REG_OS_IE_T0_SHIFT, REG_OS_IE_T3_SHIFT, OS_ARENA_DTCM, OS_ARENA_ITCM, OS_ARENA_MAIN, OS_ARENA_MAINEX, OS_ARENA_SYS_AREA_SHARED, OS_ARENA_WRAM_SHARED_ARM9, OS_CONSOLE_DEV_CARD, OS_CONSOLE_NITRO, OS_CONSOLE_SIZE_4MB, OS_CONSOLE_SIZE_MASK, OSi_CONSOLE_NOT_DETECT}, cp15_size_encoding, linker_addr, read, reg::{REG_IE, REG_IF, REG_IME}, set_cp15_region, write, sys::{dtcm_sys::IRQ_FUTEX_BITS, HW_CARD_ROM_HEADER_SIZE, HW_DOWNLOAD_PARAMETER_SIZE, OSSystemWork, SYS_AREA_START, SYS_AREA_SYSTEM_WORK, red::hw_red_reserved}};
 
 #[repr(C)]
 pub struct OSThreadQueue {
@@ -393,7 +393,7 @@ pub extern "C" fn OS_SetProtectionRegionsRetail() {
 #[unsafe(link_section = ".text.origaddr.0207A524")]
 #[unsafe(no_mangle)]
 pub extern "C" fn OS_GetArenaHi(arena_index: u32) -> u32 {
-    raw_field!(SYS_AREA_ARENA_INFO_BUF as *const OSArenaInfo, final hi[arena_index as usize]).get()
+    raw_field!(SYS_AREA_SYSTEM_WORK as *const OSSystemWork, arenaInfo~, final hi[arena_index as usize]).get()
 }
 
 /*(asm-corpus-filename: OS_GetArenaLo, objdump-symbol-name: arm9_bin/OS_GetArenaLo)DONE('os_arena')*/
@@ -401,7 +401,7 @@ pub extern "C" fn OS_GetArenaHi(arena_index: u32) -> u32 {
 #[unsafe(link_section = ".text.origaddr.0207A538")]
 #[unsafe(no_mangle)]
 pub extern "C" fn OS_GetArenaLo(arena_index: u32) -> u32 {
-    raw_field!(SYS_AREA_ARENA_INFO_BUF as *const OSArenaInfo, final lo[arena_index as usize]).get()
+    raw_field!(SYS_AREA_SYSTEM_WORK as *const OSSystemWork, arenaInfo~, final lo[arena_index as usize]).get()
 }
 
 unsafe extern "C" {
@@ -535,7 +535,7 @@ pub extern "C" fn OS_GetInitArenaLo(arena_index: u32) -> u32 {
 #[unsafe(link_section = ".text.origaddr.0207A6D8")]
 #[unsafe(no_mangle)]
 pub extern "C" fn OS_SetArenaHi(arena_index: u32, new_hi: u32) {
-    raw_field!(SYS_AREA_ARENA_INFO_BUF as *mut OSArenaInfo, final mut hi[arena_index as usize]).set(new_hi);
+    raw_field!(SYS_AREA_SYSTEM_WORK as *mut OSSystemWork, mut arenaInfo~, final mut hi[arena_index as usize]).set(new_hi);
 }
 
 /*(asm-corpus-filename: OS_SetArenaLo, objdump-symbol-name: arm9_bin/OS_SetArenaLo)DONE('os_arena')*/
@@ -543,7 +543,23 @@ pub extern "C" fn OS_SetArenaHi(arena_index: u32, new_hi: u32) {
 #[unsafe(link_section = ".text.origaddr.0207A6EC")]
 #[unsafe(no_mangle)]
 pub extern "C" fn OS_SetArenaLo(arena_index: u32, new_lo: u32) {
-    raw_field!(SYS_AREA_ARENA_INFO_BUF as *mut OSArenaInfo, final mut lo[arena_index as usize]).set(new_lo);
+    raw_field!(SYS_AREA_SYSTEM_WORK as *mut OSSystemWork, mut arenaInfo~, final mut lo[arena_index as usize]).set(new_lo);
+}
+
+/*(asm-corpus-filename: arm9/main/EnableIrqFlag, objdump-symbol-name: arm9_bin/OS_CpuDisableIrq)DONE('os_system')*/
+#[inline(never)]
+#[unsafe(link_section = ".text.origaddr.0207B7E4")]
+#[unsafe(no_mangle)]
+pub extern "C" fn OS_CpuDisableIrq() -> u32 {
+    OS_CpuDisableIrq_ASM()
+}
+
+/*(asm-corpus-filename: arm9/main/SetIrqFlag, objdump-symbol-name: arm9_bin/OS_CpuRestoreIrq)DONE('os_system')*/
+#[inline(never)]
+#[unsafe(link_section = ".text.origaddr.0207B7F8")]
+#[unsafe(no_mangle)]
+pub extern "C" fn OS_CpuRestoreIrq(state: u32) -> u32 {
+    OS_CpuRestoreIrq_ASM(state)
 }
 
 #[unsafe(link_section = ".rodata.origaddr.020B2B9C")]
