@@ -1,6 +1,6 @@
 use raw_traversal::raw_field;
 
-use crate::{Global, asm::{OS_CpuDisableIrq_ASM, OS_CpuRestoreIrq_ASM}, consts::{DMA_CHANNELS_COUNT, TIMERS_COUNT, HW_MAIN_MEM_DEBUGGER_OFFSET, REG_OS_IE_GF_SHIFT, OSi_IRQ_CALLBACK_MAX, REG_OS_IE_D0_SHIFT, REG_OS_IE_D3_SHIFT, REG_OS_IE_T0_SHIFT, REG_OS_IE_T3_SHIFT, OS_ARENA_DTCM, OS_ARENA_ITCM, OS_ARENA_MAIN, OS_ARENA_MAINEX, OS_ARENA_SYS_AREA_SHARED, OS_ARENA_WRAM_SHARED_ARM9, OS_CONSOLE_DEV_CARD, OS_CONSOLE_NITRO, OS_CONSOLE_SIZE_4MB, OS_CONSOLE_SIZE_MASK, OSi_CONSOLE_NOT_DETECT}, cp15_size_encoding, linker_addr, read, reg::{REG_IE, REG_IF, REG_IME}, set_cp15_region, write, sys::{dtcm_sys::IRQ_FUTEX_BITS, HW_CARD_ROM_HEADER_SIZE, HW_DOWNLOAD_PARAMETER_SIZE, OSSystemWork, SYS_AREA_START, SYS_AREA_SYSTEM_WORK, red::hw_red_reserved}};
+use crate::{Global, asm::{OS_CpuDisableIrq_ASM, OS_CpuRestoreIrq_ASM}, consts::{DMA_CHANNELS_COUNT, TIMERS_COUNT, HW_MAIN_MEM_DEBUGGER_OFFSET, REG_IE_ARM9_IRQ_SOURCES_MAX, OSi_IRQ_CALLBACK_MAX, REG_IE_DMA_0_FINISHED_SHIFT, REG_IE_DMA_3_FINISHED_SHIFT, REG_IE_TIMER_0_OVFLOW_SHIFT, REG_IE_TIMER_3_OVFLOW_SHIFT, OS_ARENA_DTCM, OS_ARENA_ITCM, OS_ARENA_MAIN, OS_ARENA_MAINEX, OS_ARENA_SYS_AREA_SHARED, OS_ARENA_WRAM_SHARED_ARM9, OS_CONSOLE_DEV_CARD, OS_CONSOLE_NITRO, OS_CONSOLE_SIZE_4MB, OS_CONSOLE_SIZE_MASK, OSi_CONSOLE_NOT_DETECT}, cp15_size_encoding, linker_addr, read, reg::{REG_IE, REG_IF, REG_IME}, set_cp15_region, write, sys::{dtcm_sys::IRQ_FUTEX_BITS, HW_CARD_ROM_HEADER_SIZE, HW_DOWNLOAD_PARAMETER_SIZE, OSSystemWork, SYS_AREA_START, SYS_AREA_SYSTEM_WORK, red::hw_red_reserved}};
 
 #[repr(C)]
 pub struct OSThreadQueue {
@@ -148,11 +148,11 @@ pub fn OS_MasterRestoreIrq(enable: u16) -> u16 {
 #[unsafe(link_section = ".text.origaddr.02078A98")]
 #[unsafe(no_mangle)]
 pub extern "C" fn OS_SetIrqFunction(mut mask: u32, function: Option<extern "C" fn()>) {
-    for i in 0..REG_OS_IE_GF_SHIFT + 1 {
+    for i in 0..REG_IE_ARM9_IRQ_SOURCES_MAX {
         if mask & 1 != 0 {
             let info = match i {
-                REG_OS_IE_D0_SHIFT..=REG_OS_IE_D3_SHIFT => Some(raw_field!(OSi_DynamicIrqCallbackInfo.as_ptr(), mut dma_callbacks[i - REG_OS_IE_D0_SHIFT])),
-                REG_OS_IE_T0_SHIFT..=REG_OS_IE_T3_SHIFT => Some(raw_field!(OSi_DynamicIrqCallbackInfo.as_ptr(), mut timer_callbacks[i - REG_OS_IE_T0_SHIFT])),
+                REG_IE_DMA_0_FINISHED_SHIFT..=REG_IE_DMA_3_FINISHED_SHIFT => Some(raw_field!(OSi_DynamicIrqCallbackInfo.as_ptr(), mut dma_callbacks[i - REG_IE_DMA_0_FINISHED_SHIFT])),
+                REG_IE_TIMER_0_OVFLOW_SHIFT..=REG_IE_TIMER_3_OVFLOW_SHIFT => Some(raw_field!(OSi_DynamicIrqCallbackInfo.as_ptr(), mut timer_callbacks[i - REG_IE_TIMER_0_OVFLOW_SHIFT])),
                 _ => {
                     raw_field!(OS_IRQTable.as_ptr(), final [i]).set(function);
                     None
@@ -173,11 +173,11 @@ pub extern "C" fn OS_SetIrqFunction(mut mask: u32, function: Option<extern "C" f
 #[unsafe(link_section = ".text.origaddr.02078B20")]
 #[unsafe(no_mangle)]
 pub extern "C" fn OS_GetIrqFunction(mut mask: u32) -> Option<extern "C" fn()> {
-    for i in 0..REG_OS_IE_GF_SHIFT + 1 {
+    for i in 0..REG_IE_ARM9_IRQ_SOURCES_MAX {
         if mask & 1 != 0 {
             return match i {
-                REG_OS_IE_D0_SHIFT..=REG_OS_IE_D3_SHIFT => unsafe { core::mem::transmute::<Option<extern "C" fn(*mut core::ffi::c_void)>, Option<extern "C" fn()>>(raw_field!(OSi_DynamicIrqCallbackInfo.as_ptr(), dma_callbacks[i - REG_OS_IE_D0_SHIFT]~, final func).get()) },
-                REG_OS_IE_T0_SHIFT..=REG_OS_IE_T3_SHIFT => unsafe { core::mem::transmute::<Option<extern "C" fn(*mut core::ffi::c_void)>, Option<extern "C" fn()>>(raw_field!(OSi_DynamicIrqCallbackInfo.as_ptr(), timer_callbacks[i - REG_OS_IE_T0_SHIFT]~, final func).get()) },
+                REG_IE_DMA_0_FINISHED_SHIFT..=REG_IE_DMA_3_FINISHED_SHIFT => unsafe { core::mem::transmute::<Option<extern "C" fn(*mut core::ffi::c_void)>, Option<extern "C" fn()>>(raw_field!(OSi_DynamicIrqCallbackInfo.as_ptr(), dma_callbacks[i - REG_IE_DMA_0_FINISHED_SHIFT]~, final func).get()) },
+                REG_IE_TIMER_0_OVFLOW_SHIFT..=REG_IE_TIMER_3_OVFLOW_SHIFT => unsafe { core::mem::transmute::<Option<extern "C" fn(*mut core::ffi::c_void)>, Option<extern "C" fn()>>(raw_field!(OSi_DynamicIrqCallbackInfo.as_ptr(), timer_callbacks[i - REG_IE_TIMER_0_OVFLOW_SHIFT]~, final func).get()) },
                 _ => raw_field!(OS_IRQTable.as_ptr(), final [i]).get(),
             };
         }
@@ -191,7 +191,7 @@ pub extern "C" fn OS_GetIrqFunction(mut mask: u32) -> Option<extern "C" fn()> {
 #[unsafe(link_section = ".text.origaddr.02078BAC")]
 #[unsafe(no_mangle)]
 pub extern "C" fn OSi_EnterDmaCallback(dma_no: u32, callback: Option<extern "C" fn(*mut core::ffi::c_void)>, arg: *mut core::ffi::c_void) {
-    let imask: u32 = 1 << (REG_OS_IE_D0_SHIFT as u32 + dma_no);
+    let imask: u32 = 1 << (REG_IE_DMA_0_FINISHED_SHIFT as u32 + dma_no);
     let info = raw_field!(OSi_DynamicIrqCallbackInfo.as_ptr(), mut dma_callbacks[dma_no as usize]);
     raw_field!(info, final mut func).set(callback);
     raw_field!(info, final mut arg).set(arg);
@@ -204,7 +204,7 @@ pub extern "C" fn OSi_EnterDmaCallback(dma_no: u32, callback: Option<extern "C" 
 #[unsafe(link_section = ".text.origaddr.02078BF4")]
 #[unsafe(no_mangle)]
 pub extern "C" fn OSi_EnterTimerCallback(timer_no: u32, callback: Option<extern "C" fn(*mut core::ffi::c_void)>, arg: *mut core::ffi::c_void) {
-    let imask: u32 = 1 << (REG_OS_IE_T0_SHIFT as u32 + timer_no);
+    let imask: u32 = 1 << (REG_IE_TIMER_0_OVFLOW_SHIFT as u32 + timer_no);
     let info = raw_field!(OSi_DynamicIrqCallbackInfo.as_ptr(), mut timer_callbacks[timer_no as usize]);
     raw_field!(info, final mut func).set(callback);
     raw_field!(info, final mut arg).set(arg);
@@ -564,14 +564,14 @@ pub extern "C" fn OS_CpuRestoreIrq(state: u32) -> u32 {
 
 #[unsafe(link_section = ".rodata.origaddr.020B2B9C")]
 pub static DYNAMIC_CALLBACK_INDEX_TO_BOUND_IRQ_INDEX: [u16; OSi_IRQ_CALLBACK_MAX] = [
-    REG_OS_IE_D0_SHIFT as u16,
-    REG_OS_IE_D0_SHIFT as u16 + 1,
-    REG_OS_IE_D0_SHIFT as u16 + 2,
-    REG_OS_IE_D0_SHIFT as u16 + 3,
-    REG_OS_IE_T0_SHIFT as u16,
-    REG_OS_IE_T0_SHIFT as u16 + 1,
-    REG_OS_IE_T0_SHIFT as u16 + 2,
-    REG_OS_IE_T0_SHIFT as u16 + 3,
+    REG_IE_DMA_0_FINISHED_SHIFT as u16,
+    REG_IE_DMA_0_FINISHED_SHIFT as u16 + 1,
+    REG_IE_DMA_0_FINISHED_SHIFT as u16 + 2,
+    REG_IE_DMA_0_FINISHED_SHIFT as u16 + 3,
+    REG_IE_TIMER_0_OVFLOW_SHIFT as u16,
+    REG_IE_TIMER_0_OVFLOW_SHIFT as u16 + 1,
+    REG_IE_TIMER_0_OVFLOW_SHIFT as u16 + 2,
+    REG_IE_TIMER_0_OVFLOW_SHIFT as u16 + 3,
 ];
 
 #[unsafe(link_section = ".data.origaddr.020B2BAC")]

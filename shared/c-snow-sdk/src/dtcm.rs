@@ -3,10 +3,10 @@ armv5te => {
 
 /* ====== ARM9 ====== */
 
-use crate::{Global, consts::REG_OS_IE_GF_SHIFT, os::{OSThreadQueue, OS_IrqDummy, OSi_IrqDma0, OSi_IrqDma1, OSi_IrqDma2, OSi_IrqDma3, OSi_IrqTimer0, OSi_IrqTimer1, OSi_IrqTimer2, OSi_IrqTimer3}};
+use crate::{Global, consts::REG_IE_ARM9_IRQ_SOURCES_MAX, os::{OSThreadQueue, OS_IrqDummy, OSi_IrqDma0, OSi_IrqDma1, OSi_IrqDma2, OSi_IrqDma3, OSi_IrqTimer0, OSi_IrqTimer1, OSi_IrqTimer2, OSi_IrqTimer3}};
 
 #[unsafe(link_section = ".data.dtcm.origaddr.027E0000")]
-pub static OS_IRQTable: Global<[Option<extern "C" fn()>; REG_OS_IE_GF_SHIFT + 1]> = Global::new([
+pub static OS_IRQTable: Global<[Option<extern "C" fn()>; REG_IE_ARM9_IRQ_SOURCES_MAX]> = Global::new([
     Some(OS_IrqDummy),
     Some(OS_IrqDummy),
     Some(OS_IrqDummy),
