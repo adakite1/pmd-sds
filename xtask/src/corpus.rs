@@ -49,7 +49,7 @@ const OTHER_OPS: [&str; 8] = ["msr", "mrs", "mcr", "mrc", "svc", "swi", "udf", "
 const USAGE: &str = "usage: cargo xtask corpus [run|stub|lint|fix|move|keep-symbols-list [symbols...]|strip|sync|status|lock|generate|verify] [--corpus <asm-corpus dir>] \
                      [--decomp <pmd-sky clone with all three regions built>] [--no-sync] [--encodings] \
                      [--stub-mode in-place|position|position-with-warn] [--no-auto-keep] [keep-symbols-list --remove] [lint|fix [files...] [--fix-structure] [--fix-ordering] [--fix-all]] \
-                     [--style <auto|list|columns>[,compact][,align][,label_last|label_first]] [--labels hide|before|after] [move --stage|--stage-strict]";
+                     [--style <auto|list|columns>[,compact][,align][,label_last|label_first]] [--labels hide|before|after] [move --stage|--stage-strict] [status --group-by groups[+paths]]";
 
 static COMMAND: LazyLock<Regex> = LazyLock::new(|| {
     let list = r"(\[[^\]]*\]|[^,\s\)\]]+)";
@@ -271,6 +271,7 @@ struct Options {
     align: bool,
     label_first: bool,
     labels: Labels,
+    group_by_paths: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -296,7 +297,7 @@ pub fn main(args: &[String]) -> Result<()> {
     let mut remove = false;
     let mut stage = crate::corpus_move::Stage::No;
     let (mut fix_structure, mut fix_ordering) = (false, false);
-    let mut opts = Options { stub_mode: StubMode::InPlace, auto_keep: true, encodings: false, style: Style::Auto, compact: false, align: false, label_first: false, labels: Labels::Hide };
+    let mut opts = Options { stub_mode: StubMode::InPlace, auto_keep: true, encodings: false, style: Style::Auto, compact: false, align: false, label_first: false, labels: Labels::Hide, group_by_paths: false };
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -323,6 +324,15 @@ pub fn main(args: &[String]) -> Result<()> {
                 }
             }
             "--encodings" => opts.encodings = true,
+            "--group-by" => {
+                let spec = it.next().context("--group-by needs a value")?;
+                let tokens: Vec<&str> = spec.split([',', '+']).map(str::trim).collect();
+                for t in &tokens {
+                    ensure!(matches!(*t, "groups" | "paths"), "unknown --group-by token '{t}' (expected groups, paths)\n{USAGE}");
+                }
+                ensure!(tokens.contains(&"groups"), "--group-by must include groups (e.g. --group-by groups+paths)");
+                opts.group_by_paths = tokens.contains(&"paths");
+            }
             "--style" => {
                 let spec = it.next().context("--style needs a value")?;
                 let mut layout = None;
@@ -1960,7 +1970,7 @@ fn pipeline(rsdec: &Path, corpus_root: &Path, mode: Mode, opts: Options, retry: 
     }
 
     if mode == Mode::Status {
-        print_status(&lock, &sources, &cmds, &target);
+        print_status(&lock, &sources, &cmds, &target, opts.group_by_paths);
         return Ok(());
     }
 
@@ -2321,7 +2331,7 @@ fn prune_done_dirs(root: &Path) -> Result<()> {
     Ok(())
 }
 
-fn print_status(lock: &[LockEntry], sources: &[Source], cmds: &[Cmd], target: &BTreeMap<&str, &str>) {
+fn print_status(lock: &[LockEntry], sources: &[Source], cmds: &[Cmd], target: &BTreeMap<&str, &str>, group_by_paths: bool) {
     let mut modules: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
     for e in lock {
         let m = modules.entry(e.dir()).or_default();
@@ -2337,14 +2347,22 @@ fn print_status(lock: &[LockEntry], sources: &[Source], cmds: &[Cmd], target: &B
             println!("  {m:<12} {d} / {t}");
         }
     }
-    let mut groups: BTreeMap<&str, usize> = BTreeMap::new();
-    for g in target.values() {
-        *groups.entry(g).or_default() += 1;
+    let mut groups: BTreeMap<&str, BTreeMap<&str, usize>> = BTreeMap::new();
+    for (path, g) in target {
+        let dir = path.rsplit_once('/').map_or("", |(d, _)| d);
+        *groups.entry(g).or_default().entry(dir).or_default() += 1;
     }
     if !groups.is_empty() {
         println!("groups:");
-        for (g, n) in &groups {
-            println!("  {g:<12} {n}");
+        let w = groups.keys().map(|g| g.len()).max().unwrap_or(0);
+        for (g, dirs) in &groups {
+            let n: usize = dirs.values().sum();
+            let split = if group_by_paths && dirs.len() > 1 {
+                format!(" ({})", dirs.iter().map(|(d, n)| format!("{d} => {n}")).collect::<Vec<_>>().join(", "))
+            } else {
+                String::new()
+            };
+            println!("  {g:<w$} {n}{split}");
         }
     }
     let pending: Vec<&Cmd> = cmds.iter().filter(|c| matches!(c.state, State::Stage(_))).collect();
