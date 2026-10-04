@@ -19,6 +19,8 @@ pub mod dtcm;
 
 pub mod os;
 
+pub mod pxi;
+
 pub mod sys;
 
 #[cfg(armv4t)]

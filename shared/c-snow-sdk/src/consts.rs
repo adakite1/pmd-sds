@@ -19,14 +19,107 @@ pub const ARM9_FIFO_HS_SPINWAIT_FOR_SUBPROC_NEXT_NUMBER_BEFORE_RESET: u32 = 1000
 // is the next count i due to the loop's i++, which means the lapsed round is counted and
 // one less round of success is necessary for the ARM9 going forwards until it accepts a
 // success).
-pub const DMA_CHANNELS_COUNT: usize = REG_OS_IE_D3_SHIFT - REG_OS_IE_D0_SHIFT + 1;
+pub const DMA_CHANNELS_COUNT: usize = REG_IE_DMA_3_FINISHED_SHIFT - REG_IE_DMA_0_FINISHED_SHIFT + 1;
 pub use crate::sys::dtcm_sys::DTCM_TOP;
 pub use crate::sys::dtcm_sys::IRQ_FUTEX_BITS;
 pub use crate::sys::dtcm_sys::IRQ_HANDLER_POINTER;
 pub const OSi_IRQ_CALLBACK_MAX: usize = 8;
+pub const PXI_MAX_FIFO_MESSAGE_TAG: usize = 32;
+
+pub const  REG_FIFO_CNT_ENABLE_SHIFT: usize = 15;
+pub const  REG_FIFO_CNT_ERROR_SHIFT: usize = 14;
+pub const  REG_FIFO_CNT_IRQ_UPON_RECV_NON_EMPTY_SHIFT: usize = 10;
+pub const _REG_FIFO_CNT_RO_RECV_FULL_SHIFT: usize = 9;
+pub const _REG_FIFO_CNT_RO_RECV_EMPTY_SHIFT: usize = 8;
+pub const  REG_FIFO_CNT_CLEAR_SEND_QUEUE_SHIFT: usize = 3;
+pub const _REG_FIFO_CNT_IRQ_UPON_SEND_EMPTY_SHIFT: usize = 2;
+pub const _REG_FIFO_CNT_RO_SEND_FULL_SHIFT: usize = 1;
+pub const _REG_FIFO_CNT_RO_SEND_EMPTY_SHIFT: usize = 0;
+
+pub const  REG_FIFO_CNT_ENABLE_MASK: u16 = 1 << REG_FIFO_CNT_ENABLE_SHIFT;
+pub const  REG_FIFO_CNT_ERROR_MASK: u16 = 1 << REG_FIFO_CNT_ERROR_SHIFT;
+pub const  REG_FIFO_CNT_IRQ_UPON_RECV_NON_EMPTY_MASK: u16 = 1 << REG_FIFO_CNT_IRQ_UPON_RECV_NON_EMPTY_SHIFT;
+pub const _REG_FIFO_CNT_RO_RECV_FULL_MASK: u16 = 1 << _REG_FIFO_CNT_RO_RECV_FULL_SHIFT;
+pub const _REG_FIFO_CNT_RO_RECV_EMPTY_MASK: u16 = 1 << _REG_FIFO_CNT_RO_RECV_EMPTY_SHIFT;
+pub const  REG_FIFO_CNT_CLEAR_SEND_QUEUE_MASK: u16 = 1 << REG_FIFO_CNT_CLEAR_SEND_QUEUE_SHIFT;
+pub const _REG_FIFO_CNT_IRQ_UPON_SEND_EMPTY_MASK: u16 = 1 << _REG_FIFO_CNT_IRQ_UPON_SEND_EMPTY_SHIFT;
+pub const _REG_FIFO_CNT_RO_SEND_FULL_MASK: u16 = 1 << _REG_FIFO_CNT_RO_SEND_FULL_SHIFT;
+pub const _REG_FIFO_CNT_RO_SEND_EMPTY_MASK: u16 = 1 << _REG_FIFO_CNT_RO_SEND_EMPTY_SHIFT;
+
+/// ARM7-only
+pub const _REG_IE_CHECK_WIRELESS_CHIP_SHIFT: usize = 24;
+/// ARM7-only
+pub const _REG_IE_SPI_TRANSFERRED_ONE_BYTE_SHIFT: usize = 23;
+/// ARM7-only
+pub const _REG_IE_LID_OPENED_SHIFT: usize = 22;
+/// ARM9-only
+pub const  REG_IE_GEOMETRY_FIFO_LEVEL_SHIFT: usize = 21;
+pub const _REG_IE_NDS_SLOT_IREQ_PIN_SHIFT: usize = 20;
+pub const _REG_IE_NDS_CARD_TRANSFER_DONE_SHIFT: usize = 19;
+pub const  REG_IE_FIFO_RECV_NON_EMPTY_SHIFT: usize = 18;
+pub const _REG_IE_FIFO_SEND_EMPTY_SHIFT: usize = 17;
+pub const _REG_IE_SYNC_IREQ_SHIFT: usize = 16;
+pub const _REG_IE_GBA_SLOT_IREQ_PIN_SHIFT: usize = 13;
+pub const _REG_IE_KEYINPUT_MATCH_SHIFT: usize = 12;
+pub const  REG_IE_DMA_3_FINISHED_SHIFT: usize = 11;
+pub const _REG_IE_DMA_2_FINISHED_SHIFT: usize = 10;
+pub const _REG_IE_DMA_1_FINISHED_SHIFT: usize = 9;
+pub const  REG_IE_DMA_0_FINISHED_SHIFT: usize = 8;
+/// ARM7-only
+pub const _REG_IE_RTC_SHIFT: usize = 7; // the serial (link cable) interrupt on GBA
+pub const  REG_IE_TIMER_3_OVFLOW_SHIFT: usize = 6;
+pub const _REG_IE_TIMER_2_OVFLOW_SHIFT: usize = 5;
+pub const _REG_IE_TIMER_1_OVFLOW_SHIFT: usize = 4;
+pub const  REG_IE_TIMER_0_OVFLOW_SHIFT: usize = 3;
+pub const _REG_IE_VCOUNT_MATCH_SHIFT: usize = 2;
+pub const _REG_IE_HBLANK_SHIFT: usize = 1;
+pub const _REG_IE_VBLANK_SHIFT: usize = 0;
+
+/// ARM7-only
+pub const _REG_IE_CHECK_WIRELESS_CHIP_MASK: u32 = 1 << _REG_IE_CHECK_WIRELESS_CHIP_SHIFT;
+/// ARM7-only
+pub const _REG_IE_SPI_TRANSFERRED_ONE_BYTE_MASK: u32 = 1 << _REG_IE_SPI_TRANSFERRED_ONE_BYTE_SHIFT;
+/// ARM7-only
+pub const _REG_IE_LID_OPENED_MASK: u32 = 1 << _REG_IE_LID_OPENED_SHIFT;
+/// ARM9-only
+pub const _REG_IE_GEOMETRY_FIFO_LEVEL_MASK: u32 = 1 << REG_IE_GEOMETRY_FIFO_LEVEL_SHIFT;
+pub const _REG_IE_NDS_SLOT_IREQ_PIN_MASK: u32 = 1 << _REG_IE_NDS_SLOT_IREQ_PIN_SHIFT;
+pub const _REG_IE_NDS_CARD_TRANSFER_DONE_MASK: u32 = 1 << _REG_IE_NDS_CARD_TRANSFER_DONE_SHIFT;
+pub const  REG_IE_FIFO_RECV_NON_EMPTY_MASK: u32 = 1 << REG_IE_FIFO_RECV_NON_EMPTY_SHIFT;
+pub const _REG_IE_FIFO_SEND_EMPTY_MASK: u32 = 1 << _REG_IE_FIFO_SEND_EMPTY_SHIFT;
+pub const _REG_IE_SYNC_IREQ_MASK: u32 = 1 << _REG_IE_SYNC_IREQ_SHIFT;
+pub const _REG_IE_GBA_SLOT_IREQ_PIN_MASK: u32 = 1 << _REG_IE_GBA_SLOT_IREQ_PIN_SHIFT;
+pub const _REG_IE_KEYINPUT_MATCH_MASK: u32 = 1 << _REG_IE_KEYINPUT_MATCH_SHIFT;
+pub const _REG_IE_DMA_3_FINISHED_MASK: u32 = 1 << REG_IE_DMA_3_FINISHED_SHIFT;
+pub const _REG_IE_DMA_2_FINISHED_MASK: u32 = 1 << _REG_IE_DMA_2_FINISHED_SHIFT;
+pub const _REG_IE_DMA_1_FINISHED_MASK: u32 = 1 << _REG_IE_DMA_1_FINISHED_SHIFT;
+pub const _REG_IE_DMA_0_FINISHED_MASK: u32 = 1 << REG_IE_DMA_0_FINISHED_SHIFT;
+/// ARM7-only
+pub const _REG_IE_RTC_MASK: u32 = 1 << _REG_IE_RTC_SHIFT; // the serial (link cable) interrupt on GBA
+pub const _REG_IE_TIMER_3_OVFLOW_MASK: u32 = 1 << REG_IE_TIMER_3_OVFLOW_SHIFT;
+pub const _REG_IE_TIMER_2_OVFLOW_MASK: u32 = 1 << _REG_IE_TIMER_2_OVFLOW_SHIFT;
+pub const _REG_IE_TIMER_1_OVFLOW_MASK: u32 = 1 << _REG_IE_TIMER_1_OVFLOW_SHIFT;
+pub const _REG_IE_TIMER_0_OVFLOW_MASK: u32 = 1 << REG_IE_TIMER_0_OVFLOW_SHIFT;
+pub const _REG_IE_VCOUNT_MATCH_MASK: u32 = 1 << _REG_IE_VCOUNT_MATCH_SHIFT;
+pub const _REG_IE_HBLANK_MASK: u32 = 1 << _REG_IE_HBLANK_SHIFT;
+pub const _REG_IE_VBLANK_MASK: u32 = 1 << _REG_IE_VBLANK_SHIFT;
+
+pub const _REG_IE_ARM7_IRQ_SOURCES_MAX: usize = _REG_IE_CHECK_WIRELESS_CHIP_SHIFT + 1;
+pub const  REG_IE_ARM9_IRQ_SOURCES_MAX: usize = REG_IE_GEOMETRY_FIFO_LEVEL_SHIFT + 1;
+
+pub const _REG_SYNC_INBOUND_IREQ_ALLOW_SHIFT: usize = 14;
+pub const _REG_SYNC_IREQ_SHIFT: usize = 13;
+pub const  REG_SYNC_THIS_SIDE_SHIFT: usize = 8;
+pub const  REG_SYNC_RO_THAT_SIDE_SHIFT: usize = 0;
+
+pub const _REG_SYNC_INBOUND_IREQ_ALLOW_MASK: u16 = 1 << _REG_SYNC_INBOUND_IREQ_ALLOW_SHIFT;
+pub const _REG_SYNC_IREQ_MASK: u16 = 1 << _REG_SYNC_IREQ_SHIFT;
+pub const  REG_SYNC_THIS_SIDE_MASK: u16 = 0xF << REG_SYNC_THIS_SIDE_SHIFT;
+pub const  REG_SYNC_RO_THAT_SIDE_MASK: u16 = 0xF << REG_SYNC_RO_THAT_SIDE_SHIFT;
+
 pub use crate::sys::SYS_AREA_START;
 pub use crate::sys::SYS_AREA_SYSTEM_WORK;
-pub const TIMERS_COUNT: usize = REG_OS_IE_T3_SHIFT - REG_OS_IE_T0_SHIFT + 1;
+pub const TIMERS_COUNT: usize = REG_IE_TIMER_3_OVFLOW_SHIFT - REG_IE_TIMER_0_OVFLOW_SHIFT + 1;
 
 /* ARENA_SHARED.H */
 
@@ -54,21 +147,14 @@ pub const OS_CONSOLE_DEV_CARD: u32 = 0x02000000;
 pub const OS_CONSOLE_SIZE_MASK: u32 = 0x00000003;
 pub const OS_CONSOLE_SIZE_4MB: u32 = 0x00000001;
 
-/* ARM9/IO_REG.H */
-
-pub const REG_OS_IE_GF_SHIFT: usize = 21;
-
-pub const REG_OS_IE_D3_SHIFT: usize = 11;
-
-pub const REG_OS_IE_D0_SHIFT: usize = 8;
-
-pub const REG_OS_IE_T3_SHIFT: usize = 6;
-
-pub const REG_OS_IE_T0_SHIFT: usize = 3;
-
 /* MMAP.H */
 
 /// Beyond this is private memory reserved for the hardware debugger when the game is
 /// built and run on the Debug Console with 8 MiB Main RAM.
 pub const HW_MAIN_MEM_DEBUGGER_OFFSET: u32 = 0x00700000;
+
+/* REGNAME.H */
+
+pub const  PXI_PROC_ARM9: usize = 0;
+pub const _PXI_PROC_ARM7: usize = 1;
 
