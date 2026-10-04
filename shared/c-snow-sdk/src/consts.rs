@@ -1,3 +1,24 @@
+pub const ARM7_FIFO_HS_MAINPROC_MUST_RESPOND_WITHIN: u32 = 1000; // CPU cycles,
+// with each `swi 3` spinloop taking ~4 clock cycles, translating into
+// approximately that value divided by 4.
+// ARM9 must respond to the message within this window, and if by the end of
+// this window the ARM9 has not yet echoed the next number (whether it
+// echoes early in the window does not matter since we always spin
+// in full), we start over from 8 again (more precisely 7 is the next message
+// due to the loop's i--).
+pub const ARM7_FIFO_HS_SUCCESS_AFTER: u32 = 8; // messages sent and seen echoed.
+// Only after all messages 7..=0 get echoed by ARM9 do we exit out of the handshake
+// loop to continue forward.
+pub const ARM9_FIFO_HS_ACCEPT_SUCCESS_AFTER: u32 = 4; // changes in the value.
+// Only after we see 4 consecutive changes in the value sent from ARM7 do we then
+// start accepting 0 (success) as the next number after that.
+pub const ARM9_FIFO_HS_SPINWAIT_FOR_SUBPROC_NEXT_NUMBER_BEFORE_RESET: u32 = 1000; // polls + 1 since the end condition is overflow.
+// This wait is the same number but doesn't imply a connection to ARM7_FIFO_HS_MAINPROC_MUST_RESPOND_WITHIN.
+// It is a simple spinning check on SYNC, until ARM7 responds with the next
+// number to echo back. If this count is lapsed, we start over from 0 (more precisely 1
+// is the next count i due to the loop's i++, which means the lapsed round is counted and
+// one less round of success is necessary for the ARM9 going forwards until it accepts a
+// success).
 pub const DMA_CHANNELS_COUNT: usize = REG_OS_IE_D3_SHIFT - REG_OS_IE_D0_SHIFT + 1;
 pub use crate::sys::dtcm_sys::DTCM_TOP;
 pub use crate::sys::dtcm_sys::IRQ_FUTEX_BITS;
