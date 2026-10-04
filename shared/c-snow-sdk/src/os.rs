@@ -6,30 +6,28 @@ use crate::{Global, consts::{DMA_CHANNELS_COUNT, TIMERS_COUNT, HW_MAIN_MEM_DEBUG
 pub struct OSThreadQueue {
     pub head: *mut core::ffi::c_void,
     pub tail: *mut core::ffi::c_void,
-
-    //TODO:
 }
 
 #[repr(C)]
-pub struct OSIrqCallbackInfo {
+pub struct OSDynamicIrqCallbackInfo {
     pub func: Option<extern "C" fn(*mut core::ffi::c_void)>,
     pub enable: u32,
     pub arg: *mut core::ffi::c_void,
 }
 
-/// Different view of the same data as [`OSIrqCallbackInfoTable`]
+/// Different view of the same data as [`OSDynamicIrqCallbackInfoTable`]
 #[repr(C)]
-pub struct OSIrqCallbackInfoList {
-    pub callbacks: [OSIrqCallbackInfo; DMA_CHANNELS_COUNT + TIMERS_COUNT],
+pub struct OSDynamicIrqCallbackInfoList {
+    pub callbacks: [OSDynamicIrqCallbackInfo; DMA_CHANNELS_COUNT + TIMERS_COUNT],
 }
-const _: () = assert!(core::mem::size_of::<OSIrqCallbackInfoList>() / core::mem::size_of::<OSIrqCallbackInfo>() == OSi_IRQ_CALLBACK_MAX);
+const _: () = assert!(core::mem::size_of::<OSDynamicIrqCallbackInfoList>() / core::mem::size_of::<OSDynamicIrqCallbackInfo>() == OSi_IRQ_CALLBACK_MAX);
 
 #[repr(C)]
-pub struct OSIrqCallbackInfoTable {
-    pub dma_callbacks: [OSIrqCallbackInfo; DMA_CHANNELS_COUNT],
-    pub timer_callbacks: [OSIrqCallbackInfo; TIMERS_COUNT],
+pub struct OSDynamicIrqCallbackInfoTable {
+    pub dma_callbacks: [OSDynamicIrqCallbackInfo; DMA_CHANNELS_COUNT],
+    pub timer_callbacks: [OSDynamicIrqCallbackInfo; TIMERS_COUNT],
 }
-const _: () = assert!(core::mem::size_of::<OSIrqCallbackInfoTable>() / core::mem::size_of::<OSIrqCallbackInfo>() == OSi_IRQ_CALLBACK_MAX);
+const _: () = assert!(core::mem::size_of::<OSDynamicIrqCallbackInfoTable>() / core::mem::size_of::<OSDynamicIrqCallbackInfo>() == OSi_IRQ_CALLBACK_MAX);
 
 cfg_select! {
 armv5te => {
@@ -46,12 +44,12 @@ pub extern "C" fn OS_IrqDummy() {
     
 }
 
-/*(asm-corpus-filename: OSi_IrqCallback, objdump-symbol-name: arm9_bin/OSi_IrqCallback)DONE('os_irqTable', us, eu, jp)*/
+/*(asm-corpus-filename: OSi_IrqCallback, objdump-symbol-name: arm9_bin/OSi_DynamicIrqCallback)DONE('os_irqTable', us, eu, jp)*/
 #[inline(never)]
 #[unsafe(link_section = ".text.origaddr.02078978")]
 #[unsafe(no_mangle)]
-pub extern "C" fn OSi_IrqCallback(index: u32) {
-    let info = raw_field!(OSi_IrqCallbackInfo.as_ptr().cast::<OSIrqCallbackInfoList>(), mut callbacks[index as usize]);
+pub extern "C" fn OSi_DynamicIrqCallback(index: u32) {
+    let info = raw_field!(OSi_DynamicIrqCallbackInfo.as_ptr().cast::<OSDynamicIrqCallbackInfoList>(), mut callbacks[index as usize]);
     let func = raw_field!(info, final mut func).get();
     raw_field!(info, final mut func).set(None);
     let mask: u32 = 1 << raw_field!(&raw const DYNAMIC_CALLBACK_INDEX_TO_BOUND_IRQ_INDEX, final [index as usize]).get();
@@ -60,7 +58,7 @@ pub extern "C" fn OSi_IrqCallback(index: u32) {
     }
     write(IRQ_FUTEX_BITS as *mut u32, read(IRQ_FUTEX_BITS as *const u32) | mask);
     if raw_field!(info, final enable).get() == 0 {
-        OS_DisableIrqMask(mask);
+        OS_DisableIrqSources(mask);
     }
 }
 
@@ -69,28 +67,28 @@ pub extern "C" fn OSi_IrqCallback(index: u32) {
 #[unsafe(link_section = ".text.origaddr.02078A00")]
 #[unsafe(no_mangle)]
 pub extern "C" fn OSi_IrqDma0() {
-    OSi_IrqCallback(0);
+    OSi_DynamicIrqCallback(0);
 }
 
 #[inline(never)]
 #[unsafe(link_section = ".text.origaddr.02078A10")]
 #[unsafe(no_mangle)]
 pub extern "C" fn OSi_IrqDma1() {
-    OSi_IrqCallback(1);
+    OSi_DynamicIrqCallback(1);
 }
 
 #[inline(never)]
 #[unsafe(link_section = ".text.origaddr.02078A20")]
 #[unsafe(no_mangle)]
 pub extern "C" fn OSi_IrqDma2() {
-    OSi_IrqCallback(2);
+    OSi_DynamicIrqCallback(2);
 }
 
 #[inline(never)]
 #[unsafe(link_section = ".text.origaddr.02078A30")]
 #[unsafe(no_mangle)]
 pub extern "C" fn OSi_IrqDma3() {
-    OSi_IrqCallback(3);
+    OSi_DynamicIrqCallback(3);
 }
 
 /*(asm-corpus-filename: [OSi_IrqTimer0, OSi_IrqTimer1, OSi_IrqTimer2, OSi_IrqTimer3], objdump-symbol-name: [arm9_bin/OSi_IrqTimer0, arm9_bin/OSi_IrqTimer1, arm9_bin/OSi_IrqTimer2, arm9_bin/OSi_IrqTimer3])DONE('os_irqTable', us, eu, jp)*/
@@ -98,48 +96,48 @@ pub extern "C" fn OSi_IrqDma3() {
 #[unsafe(link_section = ".text.origaddr.02078A40")]
 #[unsafe(no_mangle)]
 pub extern "C" fn OSi_IrqTimer0() {
-    OSi_IrqCallback(DMA_CHANNELS_COUNT as u32);
+    OSi_DynamicIrqCallback(DMA_CHANNELS_COUNT as u32);
 }
 
 #[inline(never)]
 #[unsafe(link_section = ".text.origaddr.02078A50")]
 #[unsafe(no_mangle)]
 pub extern "C" fn OSi_IrqTimer1() {
-    OSi_IrqCallback(DMA_CHANNELS_COUNT as u32 + 1);
+    OSi_DynamicIrqCallback(DMA_CHANNELS_COUNT as u32 + 1);
 }
 
 #[inline(never)]
 #[unsafe(link_section = ".text.origaddr.02078A60")]
 #[unsafe(no_mangle)]
 pub extern "C" fn OSi_IrqTimer2() {
-    OSi_IrqCallback(DMA_CHANNELS_COUNT as u32 + 2);
+    OSi_DynamicIrqCallback(DMA_CHANNELS_COUNT as u32 + 2);
 }
 
 #[inline(never)]
 #[unsafe(link_section = ".text.origaddr.02078A70")]
 #[unsafe(no_mangle)]
 pub extern "C" fn OSi_IrqTimer3() {
-    OSi_IrqCallback(DMA_CHANNELS_COUNT as u32 + 3);
+    OSi_DynamicIrqCallback(DMA_CHANNELS_COUNT as u32 + 3);
 }
 
-/*(asm-corpus-filename: OS_InitIrqTable, objdump-symbol-name: arm9_bin/OS_InitIrqTable)DONE('os_interrupt')*/
+/*(asm-corpus-filename: OS_InitIrqTable, objdump-symbol-name: arm9_bin/OS_InitIrqThreadQueue)DONE('os_interrupt')*/
 #[inline(never)]
 #[unsafe(link_section = ".text.origaddr.02078A80")]
 #[unsafe(no_mangle)]
-pub extern "C" fn OS_InitIrqTable() {
+pub extern "C" fn OS_InitIrqThreadQueue() {
     raw_field!(OSi_IrqThreadQueue.as_ptr(), final mut tail).set(core::ptr::null_mut());
     raw_field!(OSi_IrqThreadQueue.as_ptr(), final mut head).set(core::ptr::null_mut());
 }
 
 #[inline(always)]
-pub fn OS_DisableIrq() -> u16 {
+pub fn OS_MasterDisableIrq() -> u16 {
     let prev = read(REG_IME);
     write(REG_IME, 0);
     prev
 }
 
 #[inline(always)]
-pub fn OS_RestoreIrq(enable: u16) -> u16 {
+pub fn OS_MasterRestoreIrq(enable: u16) -> u16 {
     let prev = read(REG_IME);
     write(REG_IME, enable);
     prev
@@ -153,8 +151,8 @@ pub extern "C" fn OS_SetIrqFunction(mut mask: u32, function: Option<extern "C" f
     for i in 0..REG_OS_IE_GF_SHIFT + 1 {
         if mask & 1 != 0 {
             let info = match i {
-                REG_OS_IE_D0_SHIFT..=REG_OS_IE_D3_SHIFT => Some(raw_field!(OSi_IrqCallbackInfo.as_ptr(), mut dma_callbacks[i - REG_OS_IE_D0_SHIFT])),
-                REG_OS_IE_T0_SHIFT..=REG_OS_IE_T3_SHIFT => Some(raw_field!(OSi_IrqCallbackInfo.as_ptr(), mut timer_callbacks[i - REG_OS_IE_T0_SHIFT])),
+                REG_OS_IE_D0_SHIFT..=REG_OS_IE_D3_SHIFT => Some(raw_field!(OSi_DynamicIrqCallbackInfo.as_ptr(), mut dma_callbacks[i - REG_OS_IE_D0_SHIFT])),
+                REG_OS_IE_T0_SHIFT..=REG_OS_IE_T3_SHIFT => Some(raw_field!(OSi_DynamicIrqCallbackInfo.as_ptr(), mut timer_callbacks[i - REG_OS_IE_T0_SHIFT])),
                 _ => {
                     raw_field!(OS_IRQTable.as_ptr(), final [i]).set(function);
                     None
@@ -178,8 +176,8 @@ pub extern "C" fn OS_GetIrqFunction(mut mask: u32) -> Option<extern "C" fn()> {
     for i in 0..REG_OS_IE_GF_SHIFT + 1 {
         if mask & 1 != 0 {
             return match i {
-                REG_OS_IE_D0_SHIFT..=REG_OS_IE_D3_SHIFT => unsafe { core::mem::transmute::<Option<extern "C" fn(*mut core::ffi::c_void)>, Option<extern "C" fn()>>(raw_field!(OSi_IrqCallbackInfo.as_ptr(), dma_callbacks[i - REG_OS_IE_D0_SHIFT]~, final func).get()) },
-                REG_OS_IE_T0_SHIFT..=REG_OS_IE_T3_SHIFT => unsafe { core::mem::transmute::<Option<extern "C" fn(*mut core::ffi::c_void)>, Option<extern "C" fn()>>(raw_field!(OSi_IrqCallbackInfo.as_ptr(), timer_callbacks[i - REG_OS_IE_T0_SHIFT]~, final func).get()) },
+                REG_OS_IE_D0_SHIFT..=REG_OS_IE_D3_SHIFT => unsafe { core::mem::transmute::<Option<extern "C" fn(*mut core::ffi::c_void)>, Option<extern "C" fn()>>(raw_field!(OSi_DynamicIrqCallbackInfo.as_ptr(), dma_callbacks[i - REG_OS_IE_D0_SHIFT]~, final func).get()) },
+                REG_OS_IE_T0_SHIFT..=REG_OS_IE_T3_SHIFT => unsafe { core::mem::transmute::<Option<extern "C" fn(*mut core::ffi::c_void)>, Option<extern "C" fn()>>(raw_field!(OSi_DynamicIrqCallbackInfo.as_ptr(), timer_callbacks[i - REG_OS_IE_T0_SHIFT]~, final func).get()) },
                 _ => raw_field!(OS_IRQTable.as_ptr(), final [i]).get(),
             };
         }
@@ -194,10 +192,11 @@ pub extern "C" fn OS_GetIrqFunction(mut mask: u32) -> Option<extern "C" fn()> {
 #[unsafe(no_mangle)]
 pub extern "C" fn OSi_EnterDmaCallback(dma_no: u32, callback: Option<extern "C" fn(*mut core::ffi::c_void)>, arg: *mut core::ffi::c_void) {
     let imask: u32 = 1 << (REG_OS_IE_D0_SHIFT as u32 + dma_no);
-    let info = raw_field!(OSi_IrqCallbackInfo.as_ptr(), mut dma_callbacks[dma_no as usize]);
+    let info = raw_field!(OSi_DynamicIrqCallbackInfo.as_ptr(), mut dma_callbacks[dma_no as usize]);
     raw_field!(info, final mut func).set(callback);
     raw_field!(info, final mut arg).set(arg);
-    raw_field!(info, final mut enable).set(OS_EnableIrqMask(imask) & imask);
+    raw_field!(info, final mut enable).set(OS_EnableIrqSources(imask) & imask);
+    //NOTE: This function is interruptible, so the corresponding hardware (DMA channels) must only be started *after* this function finishes setting up the callback for it, by convention, so an interrupt doesn't read a half-written entry.
 }
 
 /*(asm-corpus-filename: OSi_EnterTimerCallback, objdump-symbol-name: arm9_bin/OSi_EnterTimerCallback)DONE('os_interrupt', us, eu, jp)*/
@@ -206,58 +205,62 @@ pub extern "C" fn OSi_EnterDmaCallback(dma_no: u32, callback: Option<extern "C" 
 #[unsafe(no_mangle)]
 pub extern "C" fn OSi_EnterTimerCallback(timer_no: u32, callback: Option<extern "C" fn(*mut core::ffi::c_void)>, arg: *mut core::ffi::c_void) {
     let imask: u32 = 1 << (REG_OS_IE_T0_SHIFT as u32 + timer_no);
-    let info = raw_field!(OSi_IrqCallbackInfo.as_ptr(), mut timer_callbacks[timer_no as usize]);
+    let info = raw_field!(OSi_DynamicIrqCallbackInfo.as_ptr(), mut timer_callbacks[timer_no as usize]);
     raw_field!(info, final mut func).set(callback);
     raw_field!(info, final mut arg).set(arg);
-    OS_EnableIrqMask(imask);
+    OS_EnableIrqSources(imask);
     raw_field!(info, final mut enable).set(1);
+    //NOTE: This function is interruptible, so the corresponding hardware (Timers) must only be started *after* this function finishes setting up the callback for it, by convention, so an interrupt doesn't read a half-written entry.
 }
 
-/*(asm-corpus-filename: OS_SetIrqMask, objdump-symbol-name: arm9_bin/OS_SetIrqMask)DONE('os_interrupt')*/
+/// How to read: in the sense of "overwrite the set IRQ sources", "set" in the adjective sense of something having been prepared and being ready.
+///
+/// You overwrite which IRQ sources you are set and ready to start receiving requests from (and for which ones you are not).
+/*(asm-corpus-filename: OS_SetIrqMask, objdump-symbol-name: arm9_bin/OS_OverwriteSetIrqSources)DONE('os_interrupt')*/
 #[inline(never)]
 #[unsafe(link_section = ".text.origaddr.02078C3C")]
 #[unsafe(no_mangle)]
-pub extern "C" fn OS_SetIrqMask(mask: u32) -> u32 {
-    let ime = OS_DisableIrq();
+pub extern "C" fn OS_OverwriteSetIrqSources(irqs_mask: u32) -> u32 {
+    let ime = OS_MasterDisableIrq();
     let prev = read(REG_IE);
-    write(REG_IE, mask);
-    OS_RestoreIrq(ime); //NOTE: An extra ldrh r0, [r2] (like in the original asm) here because the read in OS_RestoreIrq is volatile even if the read value is not used
+    write(REG_IE, irqs_mask);
+    OS_MasterRestoreIrq(ime); //NOTE: An extra ldrh r0, [r2] (like in the original asm) here because the read in OS_MasterRestoreIrq is volatile even if the read value is not used
     prev
 }
 
-/*(asm-corpus-filename: OS_EnableIrqMask, objdump-symbol-name: arm9_bin/OS_EnableIrqMask)DONE('os_interrupt')*/
+/*(asm-corpus-filename: OS_EnableIrqMask, objdump-symbol-name: arm9_bin/OS_EnableIrqSources)DONE('os_interrupt')*/
 #[inline(never)]
 #[unsafe(link_section = ".text.origaddr.02078C68")]
 #[unsafe(no_mangle)]
-pub extern "C" fn OS_EnableIrqMask(mask: u32) -> u32 {
-    let ime = OS_DisableIrq();
+pub extern "C" fn OS_EnableIrqSources(irqs_mask: u32) -> u32 {
+    let ime = OS_MasterDisableIrq();
     let prev = read(REG_IE);
-    write(REG_IE, prev | mask);
-    OS_RestoreIrq(ime);
+    write(REG_IE, prev | irqs_mask);
+    OS_MasterRestoreIrq(ime);
     prev
 }
 
-/*(asm-corpus-filename: OS_DisableIrqMask, objdump-symbol-name: arm9_bin/OS_DisableIrqMask)DONE('os_interrupt')*/
+/*(asm-corpus-filename: OS_DisableIrqMask, objdump-symbol-name: arm9_bin/OS_DisableIrqSources)DONE('os_interrupt')*/
 #[inline(never)]
 #[unsafe(link_section = ".text.origaddr.02078C98")]
 #[unsafe(no_mangle)]
-pub extern "C" fn OS_DisableIrqMask(mask: u32) -> u32 {
-    let ime = OS_DisableIrq();
+pub extern "C" fn OS_DisableIrqSources(irqs_mask: u32) -> u32 {
+    let ime = OS_MasterDisableIrq();
     let prev = read(REG_IE);
-    write(REG_IE, prev & !mask);
-    OS_RestoreIrq(ime);
+    write(REG_IE, prev & !irqs_mask);
+    OS_MasterRestoreIrq(ime);
     prev
 }
 
-/*(asm-corpus-filename: OS_ResetRequestIrqMask, objdump-symbol-name: arm9_bin/OS_ResetRequestIrqMask)DONE('os_interrupt')*/
+/*(asm-corpus-filename: OS_ResetRequestIrqMask, objdump-symbol-name: arm9_bin/OS_AckIrqRequests)DONE('os_interrupt')*/
 #[inline(never)]
 #[unsafe(link_section = ".text.origaddr.02078CC8")]
 #[unsafe(no_mangle)]
-pub extern "C" fn OS_ResetRequestIrqMask(mask: u32) -> u32 {
-    let ime = OS_DisableIrq();
+pub extern "C" fn OS_AckIrqRequests(irqs_to_ack: u32) -> u32 {
+    let ime = OS_MasterDisableIrq();
     let prev = read(REG_IF);
-    write(REG_IF, mask);
-    OS_RestoreIrq(ime);
+    write(REG_IF, irqs_to_ack);
+    OS_MasterRestoreIrq(ime);
     prev
 }
 
@@ -559,16 +562,16 @@ pub static DYNAMIC_CALLBACK_INDEX_TO_BOUND_IRQ_INDEX: [u16; OSi_IRQ_CALLBACK_MAX
 pub static OSi_ConsoleTypeCache: Global<u32> = Global::new(OSi_CONSOLE_NOT_DETECT);
 
 #[unsafe(link_section = ".bss.origaddr.022B95E4")]
-pub static OSi_IrqCallbackInfo: Global<OSIrqCallbackInfoTable> = Global::new(OSIrqCallbackInfoTable {
+pub static OSi_DynamicIrqCallbackInfo: Global<OSDynamicIrqCallbackInfoTable> = Global::new(OSDynamicIrqCallbackInfoTable {
     dma_callbacks: [const {
-        OSIrqCallbackInfo {
+        OSDynamicIrqCallbackInfo {
             func: None,
             enable: 0,
             arg: core::ptr::null_mut(),
         }
     }; DMA_CHANNELS_COUNT],
     timer_callbacks: [const {
-        OSIrqCallbackInfo {
+        OSDynamicIrqCallbackInfo {
             func: None,
             enable: 0,
             arg: core::ptr::null_mut(),

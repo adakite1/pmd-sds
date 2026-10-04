@@ -6,7 +6,7 @@ pub const DTCM_TOP: u32 = 0x027E4000; //NOTE: This should be the same value as t
 
 pub const IRQ_HANDLER_POINTER: u32 = DTCM_TOP - 4;
 
-/// After the handler finishes its work, it sets this. DMA and timer callbacks have this done for them by [`OSi_IrqCallback`], while other handlers do this by themselves after finishing work.
+/// After the handler finishes its work, it sets this. DMA and timer callbacks have this done for them by [`crate::os::OSi_DynamicIrqCallback`], while other handlers do this by themselves after finishing work.
 ///
 /// It's similar to a futex. It is a word in user memory,
 /// with a kernel wait queue (a single wait queue here called OSi_IrqThreadQueue) keyed
