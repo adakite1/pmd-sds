@@ -8,6 +8,7 @@ mod corpus_gen;
 mod corpus_inline;
 mod corpus_keep;
 mod corpus_layout;
+mod corpus_move;
 
 /// Turns an ELF binary to a flat memory image, along with the base and ELF entrypoint addresses.
 fn flatten(path: &Path, skip_bss: bool) -> Result<(u32, u32, Vec<u8>)> {

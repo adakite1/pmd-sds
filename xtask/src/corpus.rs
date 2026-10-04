@@ -46,10 +46,10 @@ const LOAD_OPS: [&str; 13] = [
 const STORE_OPS: [&str; 12] = ["str", "strb", "strh", "strd", "stm", "stmia", "stmib", "stmda", "stmdb", "stmfd", "push", "swp"];
 const OTHER_OPS: [&str; 8] = ["msr", "mrs", "mcr", "mrc", "svc", "swi", "udf", "nop"];
 
-const USAGE: &str = "usage: cargo xtask corpus [run|stub|lint|fix|keep-symbols-list [symbols...]|strip|sync|status|lock|generate|verify] [--corpus <asm-corpus dir>] \
+const USAGE: &str = "usage: cargo xtask corpus [run|stub|lint|fix|move|keep-symbols-list [symbols...]|strip|sync|status|lock|generate|verify] [--corpus <asm-corpus dir>] \
                      [--decomp <pmd-sky clone with all three regions built>] [--no-sync] [--encodings] \
                      [--stub-mode in-place|position|position-with-warn] [--no-auto-keep] [keep-symbols-list --remove] [lint|fix [files...] [--fix-structure] [--fix-ordering] [--fix-all]] \
-                     [--style <auto|list|columns>[,compact][,align][,label_last|label_first]] [--labels hide|before|after]";
+                     [--style <auto|list|columns>[,compact][,align][,label_last|label_first]] [--labels hide|before|after] [move --stage|--stage-strict]";
 
 static COMMAND: LazyLock<Regex> = LazyLock::new(|| {
     let list = r"(\[[^\]]*\]|[^,\s\)\]]+)";
@@ -294,6 +294,7 @@ pub fn main(args: &[String]) -> Result<()> {
     let mut files: Vec<PathBuf> = Vec::new();
     let mut symbols: Vec<String> = Vec::new();
     let mut remove = false;
+    let mut stage = crate::corpus_move::Stage::No;
     let (mut fix_structure, mut fix_ordering) = (false, false);
     let mut opts = Options { stub_mode: StubMode::InPlace, auto_keep: true, encodings: false, style: Style::Auto, compact: false, align: false, label_first: false, labels: Labels::Hide };
     let mut it = args.iter();
@@ -308,6 +309,8 @@ pub fn main(args: &[String]) -> Result<()> {
             "--no-sync" => no_sync = true,
             "--no-auto-keep" => opts.auto_keep = false,
             "--remove" => remove = true,
+            "--stage" => stage = crate::corpus_move::Stage::IfClean,
+            "--stage-strict" => stage = crate::corpus_move::Stage::Strict,
             "--fix-structure" => fix_structure = true,
             "--fix-ordering" => fix_ordering = true,
             "--fix-all" => (fix_structure, fix_ordering) = (true, true),
@@ -386,6 +389,7 @@ pub fn main(args: &[String]) -> Result<()> {
         "generate" => generate(&rsdec, &decomp()?, &corpus, no_sync, opts),
         "verify" => corpus_gen::verify(&decomp()?, &corpus),
         "lint" => lint_cmd(&rsdec, &files),
+        "move" => crate::corpus_move::run(&rsdec, &source_files(&rsdec)?, stage),
         "fix" => {
             if !fix_structure && !fix_ordering {
                 fix_structure = true;
@@ -879,7 +883,7 @@ fn remove_span(text: &str, span: std::ops::Range<usize>) -> String {
     }
 }
 
-fn warn(msg: &str) {
+pub(crate) fn warn(msg: &str) {
     anstream::println!("\x1b[33mWARN:\x1b[0m {msg}");
 }
 

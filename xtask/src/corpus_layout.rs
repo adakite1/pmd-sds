@@ -574,3 +574,77 @@ pub fn insert_at(text: &str, placement: &Placement, body: &[String]) -> String {
     lines.splice(at..at, block);
     lines.join("\n")
 }
+
+fn item_lead(lines: &[&str], first: usize) -> usize {
+    let mut s = lead_start(lines, first);
+    while s > 0 {
+        let above = lines[s - 1].trim();
+        if !above.ends_with("*/") || above.ends_with(ASM_END) || above.starts_with("/*") {
+            break;
+        }
+        let Some(open) = (0..s - 1).rev().find(|k| lines[*k].trim_start().starts_with("/*")) else { break };
+        if lines[open..s - 1].iter().any(|l| l.contains("*/")) {
+            break;
+        }
+        s = lead_start(lines, open);
+    }
+    s
+}
+
+pub struct ItemSpan {
+    pub lead: usize,
+    pub first: usize,
+    pub last: usize,
+    pub ident: Option<String>,
+}
+
+fn all_items(text: &str) -> Result<Vec<syn::Item>, (usize, String)> {
+    let err = |e: syn::Error| (e.span().start().line.saturating_sub(1), e.to_string());
+    let file = syn::parse_file(text).map_err(err)?;
+    let mut top = Vec::new();
+    for item in &file.items {
+        if is_cfg_select(item) {
+            if let syn::Item::Macro(m) = item {
+                for (_, items) in cfg_arms(m.mac.tokens.clone()).map_err(err)? {
+                    top.extend(items);
+                }
+            }
+        } else {
+            top.push(item.clone());
+        }
+    }
+    let mut out = Vec::new();
+    let mut stack = top;
+    stack.reverse();
+    while let Some(item) = stack.pop() {
+        if let syn::Item::Mod(m) = &item
+            && let Some((_, inner)) = &m.content
+        {
+            stack.extend(inner.iter().rev().cloned());
+        }
+        out.push(item);
+    }
+    Ok(out)
+}
+
+pub fn item_spans(text: &str) -> Result<Vec<ItemSpan>, (usize, String)> {
+    let lines: Vec<&str> = text.split('\n').collect();
+    Ok(all_items(text)?
+        .iter()
+        .map(|item| {
+            let span = item.span();
+            let first = span.start().line - 1;
+            ItemSpan {
+                lead: item_lead(&lines, first),
+                first,
+                last: span.end().line - 1,
+                ident: label(item).and_then(|l| l.rsplit(' ').next().map(String::from)),
+            }
+        })
+        .collect())
+}
+
+pub fn item_tokens(text: &str) -> Result<Vec<String>, (usize, String)> {
+    Ok(all_items(text)?.iter().map(|i| i.to_token_stream().to_string()).collect())
+}
+
