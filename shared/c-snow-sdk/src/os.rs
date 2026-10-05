@@ -29,6 +29,72 @@ pub struct OSDynamicIrqCallbackInfoTable {
 }
 const _: () = assert!(core::mem::size_of::<OSDynamicIrqCallbackInfoTable>() / core::mem::size_of::<OSDynamicIrqCallbackInfo>() == OSi_IRQ_CALLBACK_MAX);
 
+/*(asm-corpus-filename: arm7/wram/ClearImeFlag, objdump-symbol-name: arm7_bin/OS_MasterDisableIrq)DONE('os_interrupt')*/
+#[cfg_attr(armv4t, inline(never))]
+#[cfg_attr(armv4t, unsafe(link_section = ".text.wram.origaddr.037FB8D8"))]
+#[cfg_attr(armv4t, unsafe(no_mangle))]
+#[cfg_attr(armv5te, inline(always))]
+pub extern "C" fn OS_MasterDisableIrq() -> u16 {
+    let prev = read(REG_IME);
+    write(REG_IME, 0);
+    prev
+}
+
+#[inline(always)]
+pub fn OS_MasterRestoreIrq(enable: u16) -> u16 {
+    let prev = read(REG_IME);
+    write(REG_IME, enable);
+    prev
+}
+
+/*(asm-corpus-filename: arm7/wram/sub_037FB8F0, objdump-symbol-name: arm7_bin/OS_EnableIrqSources)DONE('os_interrupt')*/
+/*(asm-corpus-filename: OS_EnableIrqMask, objdump-symbol-name: arm9_bin/OS_EnableIrqSources)DONE('os_interrupt')*/
+#[inline(never)]
+#[cfg_attr(armv4t, unsafe(link_section = ".text.wram.origaddr.037FB8F0"))]
+#[cfg_attr(armv5te, unsafe(link_section = ".text.origaddr.02078C68"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn OS_EnableIrqSources(irqs_mask: u32) -> u32 {
+    let ime = OS_MasterDisableIrq();
+    let prev = read(REG_IE);
+    write(REG_IE, prev | irqs_mask);
+    OS_MasterRestoreIrq(ime);
+    prev
+}
+
+/*(asm-corpus-filename: arm7/wram/sub_037FB964, objdump-symbol-name: arm7_bin/OS_AckIrqRequests)DONE('os_interrupt')*/
+/*(asm-corpus-filename: OS_ResetRequestIrqMask, objdump-symbol-name: arm9_bin/OS_AckIrqRequests)DONE('os_interrupt')*/
+#[inline(never)]
+#[cfg_attr(armv4t, unsafe(link_section = ".text.wram.origaddr.037FB964"))]
+#[cfg_attr(armv5te, unsafe(link_section = ".text.origaddr.02078CC8"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn OS_AckIrqRequests(irqs_to_ack: u32) -> u32 {
+    let ime = OS_MasterDisableIrq();
+    let prev = read(REG_IF);
+    write(REG_IF, irqs_to_ack);
+    OS_MasterRestoreIrq(ime);
+    prev
+}
+
+/*(asm-corpus-filename: arm7/wram/EnableIrqFlag, objdump-symbol-name: arm7_bin/OS_CpuDisableIrq)DONE('os_system')*/
+/*(asm-corpus-filename: arm9/main/EnableIrqFlag, objdump-symbol-name: arm9_bin/OS_CpuDisableIrq)DONE('os_system')*/
+#[inline(never)]
+#[cfg_attr(armv4t, unsafe(link_section = ".text.wram.origaddr.037FDD00"))]
+#[cfg_attr(armv5te, unsafe(link_section = ".text.origaddr.0207B7E4"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn OS_CpuDisableIrq() -> u32 {
+    OS_CpuDisableIrq_ASM()
+}
+
+/*(asm-corpus-filename: arm7/wram/SetIrqFlag, objdump-symbol-name: arm7_bin/OS_CpuRestoreIrq)DONE('os_system')*/
+/*(asm-corpus-filename: arm9/main/SetIrqFlag, objdump-symbol-name: arm9_bin/OS_CpuRestoreIrq)DONE('os_system')*/
+#[inline(never)]
+#[cfg_attr(armv4t, unsafe(link_section = ".text.wram.origaddr.037FDD14"))]
+#[cfg_attr(armv5te, unsafe(link_section = ".text.origaddr.0207B7F8"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn OS_CpuRestoreIrq(state: u32) -> u32 {
+    OS_CpuRestoreIrq_ASM(state)
+}
+
 cfg_select! {
 armv5te => {
 
@@ -129,20 +195,6 @@ pub extern "C" fn OS_InitIrqThreadQueue() {
     raw_field!(OSi_IrqThreadQueue.as_ptr(), final mut head).set(core::ptr::null_mut());
 }
 
-#[inline(always)]
-pub fn OS_MasterDisableIrq() -> u16 {
-    let prev = read(REG_IME);
-    write(REG_IME, 0);
-    prev
-}
-
-#[inline(always)]
-pub fn OS_MasterRestoreIrq(enable: u16) -> u16 {
-    let prev = read(REG_IME);
-    write(REG_IME, enable);
-    prev
-}
-
 /*(asm-corpus-filename: OS_SetIrqFunction, objdump-symbol-name: arm9_bin/OS_SetIrqFunction)DONE('os_interrupt', us, eu, jp)*/
 #[inline(never)]
 #[unsafe(link_section = ".text.origaddr.02078A98")]
@@ -228,18 +280,6 @@ pub extern "C" fn OS_OverwriteSetIrqSources(irqs_mask: u32) -> u32 {
     prev
 }
 
-/*(asm-corpus-filename: OS_EnableIrqMask, objdump-symbol-name: arm9_bin/OS_EnableIrqSources)DONE('os_interrupt')*/
-#[inline(never)]
-#[unsafe(link_section = ".text.origaddr.02078C68")]
-#[unsafe(no_mangle)]
-pub extern "C" fn OS_EnableIrqSources(irqs_mask: u32) -> u32 {
-    let ime = OS_MasterDisableIrq();
-    let prev = read(REG_IE);
-    write(REG_IE, prev | irqs_mask);
-    OS_MasterRestoreIrq(ime);
-    prev
-}
-
 /*(asm-corpus-filename: OS_DisableIrqMask, objdump-symbol-name: arm9_bin/OS_DisableIrqSources)DONE('os_interrupt')*/
 #[inline(never)]
 #[unsafe(link_section = ".text.origaddr.02078C98")]
@@ -248,18 +288,6 @@ pub extern "C" fn OS_DisableIrqSources(irqs_mask: u32) -> u32 {
     let ime = OS_MasterDisableIrq();
     let prev = read(REG_IE);
     write(REG_IE, prev & !irqs_mask);
-    OS_MasterRestoreIrq(ime);
-    prev
-}
-
-/*(asm-corpus-filename: OS_ResetRequestIrqMask, objdump-symbol-name: arm9_bin/OS_AckIrqRequests)DONE('os_interrupt')*/
-#[inline(never)]
-#[unsafe(link_section = ".text.origaddr.02078CC8")]
-#[unsafe(no_mangle)]
-pub extern "C" fn OS_AckIrqRequests(irqs_to_ack: u32) -> u32 {
-    let ime = OS_MasterDisableIrq();
-    let prev = read(REG_IF);
-    write(REG_IF, irqs_to_ack);
     OS_MasterRestoreIrq(ime);
     prev
 }
@@ -544,22 +572,6 @@ pub extern "C" fn OS_SetArenaHi(arena_index: u32, new_hi: u32) {
 #[unsafe(no_mangle)]
 pub extern "C" fn OS_SetArenaLo(arena_index: u32, new_lo: u32) {
     raw_field!(SYS_AREA_SYSTEM_WORK as *mut OSSystemWork, mut arenaInfo~, final mut lo[arena_index as usize]).set(new_lo);
-}
-
-/*(asm-corpus-filename: arm9/main/EnableIrqFlag, objdump-symbol-name: arm9_bin/OS_CpuDisableIrq)DONE('os_system')*/
-#[inline(never)]
-#[unsafe(link_section = ".text.origaddr.0207B7E4")]
-#[unsafe(no_mangle)]
-pub extern "C" fn OS_CpuDisableIrq() -> u32 {
-    OS_CpuDisableIrq_ASM()
-}
-
-/*(asm-corpus-filename: arm9/main/SetIrqFlag, objdump-symbol-name: arm9_bin/OS_CpuRestoreIrq)DONE('os_system')*/
-#[inline(never)]
-#[unsafe(link_section = ".text.origaddr.0207B7F8")]
-#[unsafe(no_mangle)]
-pub extern "C" fn OS_CpuRestoreIrq(state: u32) -> u32 {
-    OS_CpuRestoreIrq_ASM(state)
 }
 
 #[unsafe(link_section = ".rodata.origaddr.020B2B9C")]
