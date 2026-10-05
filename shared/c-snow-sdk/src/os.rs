@@ -29,6 +29,33 @@ pub struct OSDynamicIrqCallbackInfoTable {
 }
 const _: () = assert!(core::mem::size_of::<OSDynamicIrqCallbackInfoTable>() / core::mem::size_of::<OSDynamicIrqCallbackInfo>() == OSi_IRQ_CALLBACK_MAX);
 
+/*(asm-corpus-filename: arm7/wram/sub_037FB638, objdump-symbol-name: arm7_bin/OS_IrqDummy)DONE('os_irqTable')*/
+/*(asm-corpus-filename: OS_IrqDummy, objdump-symbol-name: arm9_bin/OS_IrqDummy)DONE('os_irqTable')*/
+#[inline(never)]
+#[cfg_attr(armv4t, unsafe(link_section = ".text.wram.origaddr.037FB638"))]
+#[cfg_attr(armv5te, unsafe(link_section = ".text.origaddr.02078974"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn OS_IrqDummy() {
+    
+}
+
+/// How to read: in the sense of "overwrite the set IRQ sources", "set" in the adjective sense of something having been prepared and being ready.
+///
+/// You overwrite which IRQ sources you are set and ready to start receiving requests from (and for which ones you are not).
+/*(asm-corpus-filename: arm7/wram/sub_037FB8A4, objdump-symbol-name: arm7_bin/OS_OverwriteSetIrqSources)DONE('os_interrupt')*/
+/*(asm-corpus-filename: OS_SetIrqMask, objdump-symbol-name: arm9_bin/OS_OverwriteSetIrqSources)DONE('os_interrupt')*/
+#[inline(never)]
+#[cfg_attr(armv4t, unsafe(link_section = ".text.wram.origaddr.037FB8A4"))]
+#[cfg_attr(armv5te, unsafe(link_section = ".text.origaddr.02078C3C"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn OS_OverwriteSetIrqSources(irqs_mask: u32) -> u32 {
+    let ime = OS_MasterDisableIrq();
+    let prev = read(REG_IE);
+    write(REG_IE, irqs_mask);
+    OS_MasterRestoreIrq(ime); //NOTE: An extra ldrh r0, [r2] (like in the original asm) here because the read in OS_MasterRestoreIrq is volatile even if the read value is not used
+    prev
+}
+
 /*(asm-corpus-filename: arm7/wram/ClearImeFlag, objdump-symbol-name: arm7_bin/OS_MasterDisableIrq)DONE('os_interrupt')*/
 #[cfg_attr(armv4t, inline(never))]
 #[cfg_attr(armv4t, unsafe(link_section = ".text.wram.origaddr.037FB8D8"))]
@@ -61,6 +88,20 @@ pub extern "C" fn OS_EnableIrqSources(irqs_mask: u32) -> u32 {
     prev
 }
 
+/*(asm-corpus-filename: arm7/wram/ClearIeFlag, objdump-symbol-name: arm7_bin/OS_DisableIrqSources)DONE('os_interrupt')*/
+/*(asm-corpus-filename: OS_DisableIrqMask, objdump-symbol-name: arm9_bin/OS_DisableIrqSources)DONE('os_interrupt')*/
+#[inline(never)]
+#[cfg_attr(armv4t, unsafe(link_section = ".text.wram.origaddr.037FB928"))]
+#[cfg_attr(armv5te, unsafe(link_section = ".text.origaddr.02078C98"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn OS_DisableIrqSources(irqs_mask: u32) -> u32 {
+    let ime = OS_MasterDisableIrq();
+    let prev = read(REG_IE);
+    write(REG_IE, prev & !irqs_mask);
+    OS_MasterRestoreIrq(ime);
+    prev
+}
+
 /*(asm-corpus-filename: arm7/wram/sub_037FB964, objdump-symbol-name: arm7_bin/OS_AckIrqRequests)DONE('os_interrupt')*/
 /*(asm-corpus-filename: OS_ResetRequestIrqMask, objdump-symbol-name: arm9_bin/OS_AckIrqRequests)DONE('os_interrupt')*/
 #[inline(never)]
@@ -73,6 +114,45 @@ pub extern "C" fn OS_AckIrqRequests(irqs_to_ack: u32) -> u32 {
     write(REG_IF, irqs_to_ack);
     OS_MasterRestoreIrq(ime);
     prev
+}
+
+/*(asm-corpus-filename: arm7/wram/sub_037FCA94, objdump-symbol-name: arm7_bin/OS_GetArenaHi)DONE('os_arena')*/
+/*(asm-corpus-filename: OS_GetArenaHi, objdump-symbol-name: arm9_bin/OS_GetArenaHi)DONE('os_arena')*/
+#[inline(never)]
+#[cfg_attr(armv4t, unsafe(link_section = ".text.wram.origaddr.037FCA94"))]
+#[cfg_attr(armv5te, unsafe(link_section = ".text.origaddr.0207A524"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn OS_GetArenaHi(arena_index: u32) -> u32 {
+    raw_field!(SYS_AREA_SYSTEM_WORK as *const OSSystemWork, arenaInfo~, final hi[arena_index as usize]).get()
+}
+
+/*(asm-corpus-filename: arm7/wram/sub_037FCAA8, objdump-symbol-name: arm7_bin/OS_GetArenaLo)DONE('os_arena')*/
+/*(asm-corpus-filename: OS_GetArenaLo, objdump-symbol-name: arm9_bin/OS_GetArenaLo)DONE('os_arena')*/
+#[inline(never)]
+#[cfg_attr(armv4t, unsafe(link_section = ".text.wram.origaddr.037FCAA8"))]
+#[cfg_attr(armv5te, unsafe(link_section = ".text.origaddr.0207A538"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn OS_GetArenaLo(arena_index: u32) -> u32 {
+    raw_field!(SYS_AREA_SYSTEM_WORK as *const OSSystemWork, arenaInfo~, final lo[arena_index as usize]).get()
+}
+
+/*(asm-corpus-filename: OS_SetArenaHi, objdump-symbol-name: arm9_bin/OS_SetArenaHi)DONE('os_arena')*/
+#[cfg_attr(armv4t, inline(always))]
+#[cfg_attr(armv5te, inline(never))]
+#[cfg_attr(armv5te, unsafe(link_section = ".text.origaddr.0207A6D8"))]
+#[cfg_attr(armv5te, unsafe(no_mangle))]
+pub extern "C" fn OS_SetArenaHi(arena_index: u32, new_hi: u32) {
+    raw_field!(SYS_AREA_SYSTEM_WORK as *mut OSSystemWork, mut arenaInfo~, final mut hi[arena_index as usize]).set(new_hi);
+}
+
+/*(asm-corpus-filename: arm7/wram/sub_037FCB90, objdump-symbol-name: arm7_bin/OS_SetArenaLo)DONE('os_arena')*/
+/*(asm-corpus-filename: OS_SetArenaLo, objdump-symbol-name: arm9_bin/OS_SetArenaLo)DONE('os_arena')*/
+#[inline(never)]
+#[cfg_attr(armv4t, unsafe(link_section = ".text.wram.origaddr.037FCB90"))]
+#[cfg_attr(armv5te, unsafe(link_section = ".text.origaddr.0207A6EC"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn OS_SetArenaLo(arena_index: u32, new_lo: u32) {
+    raw_field!(SYS_AREA_SYSTEM_WORK as *mut OSSystemWork, mut arenaInfo~, final mut lo[arena_index as usize]).set(new_lo);
 }
 
 /*(asm-corpus-filename: arm7/wram/EnableIrqFlag, objdump-symbol-name: arm7_bin/OS_CpuDisableIrq)DONE('os_system')*/
@@ -101,14 +181,6 @@ armv5te => {
 /* ====== ARM9 ====== */
 
 use crate::dtcm::{OS_IRQTable, OSi_IrqThreadQueue};
-
-/*(asm-corpus-filename: OS_IrqDummy, objdump-symbol-name: arm9_bin/OS_IrqDummy)DONE('os_irqTable')*/
-#[inline(never)]
-#[unsafe(link_section = ".text.origaddr.02078974")]
-#[unsafe(no_mangle)]
-pub extern "C" fn OS_IrqDummy() {
-    
-}
 
 /*(asm-corpus-filename: OSi_IrqCallback, objdump-symbol-name: arm9_bin/OSi_DynamicIrqCallback)DONE('os_irqTable', us, eu, jp)*/
 #[inline(never)]
@@ -265,33 +337,6 @@ pub extern "C" fn OSi_EnterTimerCallback(timer_no: u32, callback: Option<extern 
     //NOTE: This function is interruptible, so the corresponding hardware (Timers) must only be started *after* this function finishes setting up the callback for it, by convention, so an interrupt doesn't read a half-written entry.
 }
 
-/// How to read: in the sense of "overwrite the set IRQ sources", "set" in the adjective sense of something having been prepared and being ready.
-///
-/// You overwrite which IRQ sources you are set and ready to start receiving requests from (and for which ones you are not).
-/*(asm-corpus-filename: OS_SetIrqMask, objdump-symbol-name: arm9_bin/OS_OverwriteSetIrqSources)DONE('os_interrupt')*/
-#[inline(never)]
-#[unsafe(link_section = ".text.origaddr.02078C3C")]
-#[unsafe(no_mangle)]
-pub extern "C" fn OS_OverwriteSetIrqSources(irqs_mask: u32) -> u32 {
-    let ime = OS_MasterDisableIrq();
-    let prev = read(REG_IE);
-    write(REG_IE, irqs_mask);
-    OS_MasterRestoreIrq(ime); //NOTE: An extra ldrh r0, [r2] (like in the original asm) here because the read in OS_MasterRestoreIrq is volatile even if the read value is not used
-    prev
-}
-
-/*(asm-corpus-filename: OS_DisableIrqMask, objdump-symbol-name: arm9_bin/OS_DisableIrqSources)DONE('os_interrupt')*/
-#[inline(never)]
-#[unsafe(link_section = ".text.origaddr.02078C98")]
-#[unsafe(no_mangle)]
-pub extern "C" fn OS_DisableIrqSources(irqs_mask: u32) -> u32 {
-    let ime = OS_MasterDisableIrq();
-    let prev = read(REG_IE);
-    write(REG_IE, prev & !irqs_mask);
-    OS_MasterRestoreIrq(ime);
-    prev
-}
-
 /*(asm-corpus-filename: OS_SetIrqStackChecker, objdump-symbol-name: arm9_bin/OS_SetIrqStackChecker)DONE('os_interrupt')*/
 #[inline(never)]
 #[unsafe(link_section = ".text.origaddr.02078CF4")]
@@ -414,22 +459,6 @@ pub extern "C" fn OS_SetProtectionRegionsRetail() {
             enabled = true,
         );
     }
-}
-
-/*(asm-corpus-filename: OS_GetArenaHi, objdump-symbol-name: arm9_bin/OS_GetArenaHi)DONE('os_arena')*/
-#[inline(never)]
-#[unsafe(link_section = ".text.origaddr.0207A524")]
-#[unsafe(no_mangle)]
-pub extern "C" fn OS_GetArenaHi(arena_index: u32) -> u32 {
-    raw_field!(SYS_AREA_SYSTEM_WORK as *const OSSystemWork, arenaInfo~, final hi[arena_index as usize]).get()
-}
-
-/*(asm-corpus-filename: OS_GetArenaLo, objdump-symbol-name: arm9_bin/OS_GetArenaLo)DONE('os_arena')*/
-#[inline(never)]
-#[unsafe(link_section = ".text.origaddr.0207A538")]
-#[unsafe(no_mangle)]
-pub extern "C" fn OS_GetArenaLo(arena_index: u32) -> u32 {
-    raw_field!(SYS_AREA_SYSTEM_WORK as *const OSSystemWork, arenaInfo~, final lo[arena_index as usize]).get()
 }
 
 unsafe extern "C" {
@@ -556,22 +585,6 @@ pub extern "C" fn OS_GetInitArenaLo(arena_index: u32) -> u32 {
             linker_addr(&raw const __arm7_wram_base)
         },
     }
-}
-
-/*(asm-corpus-filename: OS_SetArenaHi, objdump-symbol-name: arm9_bin/OS_SetArenaHi)DONE('os_arena')*/
-#[inline(never)]
-#[unsafe(link_section = ".text.origaddr.0207A6D8")]
-#[unsafe(no_mangle)]
-pub extern "C" fn OS_SetArenaHi(arena_index: u32, new_hi: u32) {
-    raw_field!(SYS_AREA_SYSTEM_WORK as *mut OSSystemWork, mut arenaInfo~, final mut hi[arena_index as usize]).set(new_hi);
-}
-
-/*(asm-corpus-filename: OS_SetArenaLo, objdump-symbol-name: arm9_bin/OS_SetArenaLo)DONE('os_arena')*/
-#[inline(never)]
-#[unsafe(link_section = ".text.origaddr.0207A6EC")]
-#[unsafe(no_mangle)]
-pub extern "C" fn OS_SetArenaLo(arena_index: u32, new_lo: u32) {
-    raw_field!(SYS_AREA_SYSTEM_WORK as *mut OSSystemWork, mut arenaInfo~, final mut lo[arena_index as usize]).set(new_lo);
 }
 
 #[unsafe(link_section = ".rodata.origaddr.020B2B9C")]
