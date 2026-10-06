@@ -10,6 +10,63 @@
 
 use core::{marker::PhantomData, ops::{Range, RangeFrom, RangeFull, RangeInclusive, RangeTo, RangeToInclusive}};
 
+/// All RWT types assuming alignment are supposed to assume alignment and
+/// codegen to simple read and write and that is the case for the volatile ones,
+/// but for plain read and write, an RW to `&raw const place` was producing `ldrb`s
+/// and `strb`s. This did not happen at no optimizations, so looking at the MIR
+/// it's actually an interesting situation. The original MIR is:
+///
+/// ```
+/// _2 = &raw const ((*_1).1: u32);
+/// _0 = plain_read::<u32>(move _2);
+/// ```
+///
+/// Inside `plain_read`, the LowerIntrinsics pass had already lowered `read_via_copy`
+/// to `_0 = copy (*src)`, so after the Inline pass we get:
+///
+/// ```
+/// _2 = &raw const ((*_1).1: u32);
+/// _0 = copy (*_2);          // *_2 : pointee u32 => align 4
+/// ```
+///
+/// This is still fine, but then ReferencePropagation sees that we are doing a raw borrow
+/// of `(*_1).1: u32` and then immediately dereferencing it, so it pastes that in
+/// as an optimization (`*&x` to `x`):
+///
+/// ```
+/// _0 = copy ((*_1).1: u32);  // deref of *const S => packed struct align 1
+/// ```
+///
+/// ReferencePropagation does this whenever there's a `_2` which has a corresponding `(*_1).1`
+/// and `_2` is only assigned to once; when it is then used in derefs as `*_2`, the pass
+/// replaces those uses with `(*_1).1`. Additionally for a mutable borrow, the replacement
+/// only happens when *every* use of `_2` after it is bound is a `*_2`.
+///
+/// Now during codegen, each place carries the pointer, the type, and a separate align value.
+/// `_2` was a raw pointer `*const T`. When reading and writing to a raw pointer through the deref
+/// place `*p`, Rustlang requires it be aligned for T already, which is the promise we made,
+/// so when it sees a deref `*_2`, align is 4. Which is why `copy (*_2)` lowers to `ldr`.
+///
+/// *But* once the ReferencePropagation happens, suddenly the connection back to the struct is made,
+/// because `_2` is not just "any aligned T" anymore but replaced with `(*_1).1`, which is "field `.1`
+/// of a packed struct pointed to by `_1` where the inherited alignment should thus be 1".
+///
+/// This can be fixed with an aligned wrapper, since the newtype changes the MIR to:
+///
+/// ```
+/// _2 = &raw const ((*_1).1: u32);
+/// _3 = copy _2 as *const A4<u32> (PtrToPtr);
+/// _0 = copy ((*_3).0: u32);
+/// ```
+///
+/// `_3` is a pointer to a struct with alignment for T, so the `*_3` reports an align of 4, and it
+/// finally lowers to just `ldr`. ReferencePropagation also has no way to replace `(*_3).0` with a `(*_1).1`,
+/// nor replace it with `_2` since that would be a backwards optimization that ignores struct
+/// information (it would have to be a `reverse-ReferencePropagation` optimization, which doesn't make sense).
+///
+/// In `-O0`, all of this is fine and it works either way since the MIR ReferencePropagation optimization
+/// doesn't run, and in fact MIR inlining also doesn't happen so that optimization would also not do much.
+/// But we want it to work on optimized builds.
 macro_rules! aligned_wrappers {
     ($($name:ident = $n:literal),* $(,)?) => {
         $(
