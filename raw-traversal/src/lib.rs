@@ -10,6 +10,49 @@
 
 use core::{marker::PhantomData, ops::{Range, RangeFrom, RangeFull, RangeInclusive, RangeTo, RangeToInclusive}};
 
+macro_rules! aligned_wrappers {
+    ($($name:ident = $n:literal),* $(,)?) => {
+        $(
+            #[derive(Clone, Copy)]
+            #[repr(C, align($n))]
+            pub struct $name<T>(pub T);
+        )*
+
+        /// `src` must be aligned for `T`.
+        #[inline(always)]
+        unsafe fn read_promised<T>(src: *const T) -> T {
+            $(
+                if const { core::mem::align_of::<T>() == $n } {
+                    return unsafe { core::intrinsics::read_via_copy(src as *const $name<T>).0 };
+                }
+            )*
+            unsafe { core::intrinsics::read_via_copy(src) }
+        }
+
+        /// `dst` must be aligned for `T`.
+        #[inline(always)]
+        unsafe fn write_promised<T>(dst: *mut T, val: T) {
+            $(
+                if const { core::mem::align_of::<T>() == $n } {
+                    return unsafe { core::intrinsics::write_via_move(dst as *mut $name<T>, $name(val)) };
+                }
+            )*
+            unsafe { core::intrinsics::write_via_move(dst, val) }
+        }
+    };
+}
+
+aligned_wrappers! {
+    A1 = 1, A2 = 2, A4 = 4, A8 = 8, A16 = 16, A32 = 32, A64 = 64, A128 = 128,
+    A256 = 256, A512 = 512, A1024 = 1024, A2048 = 2048, A4096 = 4096,
+    A8192 = 8192, A16384 = 16384, A32768 = 32768, A65536 = 65536,
+    A131072 = 131072, A262144 = 262144, A524288 = 524288,
+    A1048576 = 1048576, A2097152 = 2097152, A4194304 = 4194304,
+    A8388608 = 8388608, A16777216 = 16777216, A33554432 = 33554432,
+    A67108864 = 67108864, A134217728 = 134217728, A268435456 = 268435456,
+    A536870912 = 536870912,
+}
+
 pub trait RWT: Copy {
     unsafe fn read<T>(src: *const T) -> T;
     unsafe fn write<T: Copy>(dst: *mut T, val: T) -> T;
@@ -72,12 +115,12 @@ impl RWT for UnalignedRW {
 impl RWT for RegularRW {
     #[inline(always)]
     unsafe fn read<T>(src: *const T) -> T {
-        unsafe { core::intrinsics::read_via_copy(src) }
+        unsafe { read_promised(src) }
     }
 
     #[inline(always)]
     unsafe fn write<T: Copy>(dst: *mut T, val: T) -> T {
-        unsafe { core::intrinsics::write_via_move(dst, val) }
+        unsafe { write_promised(dst, val) }
         val
     }
 }
