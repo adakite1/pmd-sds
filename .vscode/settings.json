@@ -1,6 +1,8 @@
 {
   "rust-analyzer.linkedProjects": [
     "./raw-traversal/Cargo.toml",
+    "./many-spans/many-spans/Cargo.toml",
+    "./many-spans/many-spans-macros/Cargo.toml",
     "./Cargo.toml",
     "./arm7/Cargo.toml",
     "./arm9/Cargo.toml"

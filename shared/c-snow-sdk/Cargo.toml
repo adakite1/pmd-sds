@@ -8,6 +8,7 @@ name = "c_snow_sdk"
 
 [dependencies]
 raw-traversal = { path = "../../raw-traversal" }
+many-spans = { path = "../../many-spans/many-spans" }
 utils = { path = "../utils" }
 
 [build-dependencies]

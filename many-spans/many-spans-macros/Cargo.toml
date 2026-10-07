@@ -1,0 +1,20 @@
+[package]
+name = "many-spans-macros"
+version = "1.0.0"
+edition = "2024"
+description = ""
+# homepage = "https://github.com/adakite1/many-spans"
+# repository = "https://github.com/adakite1/many-spans"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+keywords = []
+categories = []
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro-crate = "3"
+proc-macro2 = "1"
+quote = "1"
+syn = "3"
