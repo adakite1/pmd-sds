@@ -71,3 +71,112 @@ fn sum<I: In<S = Example>>(p: *const I) -> u32 {
 }
 ```
 
+Just to be *EXTRA* clear about why this is good, here is a fake example:
+
+```rust
+/// FAKE CODE, THIS IS JUST TO SHOW YOU WHAT IT WOULD LOOK LIKE WITHOUT:
+
+/// FAKE STRUCTS
+#[repr(C)] pub struct Arm9Table { pub dma: [Cb; 4], pub timers: [Cb; 4] }
+#[repr(C)] pub struct Arm7Table { pub timers: [Cb; 4], pub vcount: [Cb; 1] }
+
+#[cfg(feature = "arm9")]
+static mut TABLE: Arm9Table = Arm9Table { dma: [EMPTY; 4], timers: [EMPTY; 4] };
+#[cfg(feature = "arm7")]
+static mut TABLE: Arm7Table = Arm7Table { timers: [EMPTY; 4], vcount: [EMPTY; 1] };
+
+#[inline(always)]
+fn enable_impl<const HAS_DMA: bool, const HAS_VCOUNT: bool>( // <== BAD, you have to keep track of which booleans mean what and there is absolutely no type tracking. If you forget to do an if const somewhere, the asm looks fine on one cfg, and then on the other you have a bad access.
+    timers: *mut [Cb; 4], // <== BAD, these could be null and you wouldn't know it at all from just looking at this
+    dma: *mut [Cb; 4],
+    vcount: *mut [Cb; 1],
+) {
+    unsafe {
+        (*timers)[0].enable = 1;
+
+        if const { HAS_DMA } {
+            (*dma)[0].enable = 1;
+        }
+        if const { HAS_VCOUNT } {
+            (*vcount)[0].enable = 1;
+        }
+    }
+}
+
+#[cfg(feature = "arm9")]
+pub fn enable() {
+    let t = &raw mut TABLE;
+    unsafe {
+        enable_impl::<true, false>( // <== BAD, what does "<true, false>" even mean??!?
+            &raw mut (*t).timers,
+            &raw mut (*t).dma,
+            core::ptr::dangling_mut(),
+        );
+    }
+}
+
+#[cfg(feature = "arm7")] // <== BAD, the entire block is greyed out until you decide to switch cfg's, and then when you switch, check, fix, and come back, the other block is erroring now
+pub fn enable() {
+    let t = &raw mut TABLE;
+    unsafe {
+        enable_impl::<false, true>(
+            &raw mut (*t).timers,
+            core::ptr::dangling_mut(), // <== BAD, I hope you remember the order was timers, dma, then vcount, and the dangling_mut is standing in for the dma
+            &raw mut (*t).vcount,
+        );
+    }
+}
+
+
+
+/// NOW THE GOOD VERSION:
+
+
+
+use many_spans::{guard, many_spans};
+
+many_spans! {
+    #[repr(C)]
+    pub struct Table {
+        start* Arm9
+            pub dma: [Cb; 4],
+        start* Arm7
+        start Timers
+            pub timers: [Cb; 4],
+        stop Timers
+        stop Arm9
+            pub vcount: [Cb; 1],
+        stop Arm7
+    }
+}
+
+#[cfg(feature = "arm9")]
+type Instance = Table!(Arm9);
+#[cfg(feature = "arm7")]
+type Instance = Table!(Arm7);
+
+#[cfg(feature = "arm9")]
+static mut TABLE: Instance = Instance { dma: [EMPTY; 4], timers: [EMPTY; 4] };
+#[cfg(feature = "arm7")]
+static mut TABLE: Instance = Instance { timers: [EMPTY; 4], vcount: [EMPTY; 1] };
+
+pub fn enable() {
+    let t = &raw mut TABLE;
+
+    unsafe {
+        (*t).timers[0].enable = 1;
+        
+        guard!(t mut if Table with Arm9 => () {
+            unsafe { (*t).dma[0].enable = 1 };
+        });
+        guard!(t mut if Table with Arm7 => () {
+            unsafe { (*t).vcount[0].enable = 1 };
+        });
+    }
+}
+
+
+
+// You see now
+```
+
