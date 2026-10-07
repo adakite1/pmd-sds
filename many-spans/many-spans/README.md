@@ -66,8 +66,8 @@ static mut EXAMPLE: Example!(_Empty) = /* ... */;
 /// functions, or cfg the types ("type ExampleType = Example!(SomeValues) or Example!(_Empty)"),
 /// or use `guard!` instead of `imply!` (`guard!` does the `inline(always)` inner and one-line
 /// wrapper outer call under-the-hood).
-unsafe fn sum<I: In<S = Example>>(p: *const I) -> u32 {
-    unsafe { imply!(p: *const I => Example::SomeValues { (*p).a + (*p).b } do_something(); do_something_else(); 0) }
+fn sum<I: In<S = Example>>(p: *const I) -> u32 {
+    imply!(p: *const I => Example::SomeValues { (*p).a + (*p).b } do_something(); do_something_else(); 0)
 }
 ```
 

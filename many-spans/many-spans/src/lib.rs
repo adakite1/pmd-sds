@@ -123,16 +123,16 @@ macro_rules! imply {
     //     ::core::compile_error!("must have something if imply does not hold")
     // };
     ($v:ident : *const $t:ty => $span:path $body:block $($else:tt)*) => {
-        if const { $crate::serves::<$t, { $span }>() } {
-            let $v = $crate::view::<$t, { $span }>($v);
+        if const { unsafe { $crate::serves::<$t, { $span }>() } } {
+            let $v = unsafe { $crate::view::<$t, { $span }>($v) };
             $body
         } else {
             $($else)*
         }
     };
     ($v:ident : *mut $t:ty => $span:path $body:block $($else:tt)*) => {
-        if const { $crate::serves::<$t, { $span }>() } {
-            let $v = $crate::view_mut::<$t, { $span }>($v);
+        if const { unsafe { $crate::serves::<$t, { $span }>() } } {
+            let $v = unsafe { $crate::view_mut::<$t, { $span }>($v) };
             $body
         } else {
             $($else)*
@@ -162,15 +162,15 @@ macro_rules! guard {
     };
     (@expand [$($ptr:tt)+] [$view:ident] ($name:ident = $e:expr) [$($($b:ident)+ : $t:ty = $x:expr),*] [$($full:ident)::+] $span:ident; $ret:ty; $body:block; $($else:tt)*) => {{
         #[inline(always)]
-        unsafe fn __call<I: $crate::In<S = $($full)::+>>($name: $($ptr)+ I $(, $($b)+ : $t)*) -> $ret {
-            if const { $crate::serves::<I, { $($full)::+::$span }>() } {
+        fn __call<I: $crate::In<S = $($full)::+>>($name: $($ptr)+ I $(, $($b)+ : $t)*) -> $ret {
+            if const { unsafe { $crate::serves::<I, { $($full)::+::$span }>() } } {
                 let $name = unsafe { $crate::$view::<I, { $($full)::+::$span }>($name) };
                 $body
             } else {
                 $($else)*
             }
         }
-        __call($e $(, $x)*)
+        unsafe { __call($e $(, $x)*) }
     }};
 }
 
