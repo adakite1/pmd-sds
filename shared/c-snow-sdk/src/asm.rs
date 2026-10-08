@@ -43,6 +43,19 @@ pub fn OS_CpuRestoreIrq_ASM(state: u32) -> u32 {
 }
 
 #[inline(always)]
+pub fn OS_SpinWait_ASM(cycles: u32) {
+    unsafe {
+        core::arch::asm!(
+            "1:",
+            "subs {cycles}, {cycles}, #4",
+            "bhs 1b",
+            cycles = inout(reg) cycles => _,
+            options(nomem, nostack),
+        );
+    }
+}
+
+#[inline(always)]
 #[instruction_set(arm::t32)]
 pub fn SVC_SoftReset_ASM() {
     unsafe {

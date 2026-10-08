@@ -180,7 +180,7 @@ armv5te => {
 
 /* ====== ARM9 ====== */
 
-use crate::dtcm::{OS_IRQTable, OSi_IrqThreadQueue};
+use crate::{asm::OS_SpinWait_ASM, dtcm::{OS_IRQTable, OSi_IrqThreadQueue}};
 
 /*(asm-corpus-filename: OSi_IrqCallback, objdump-symbol-name: arm9_bin/OSi_DynamicIrqCallback)DONE('os_irqTable', us, eu, jp)*/
 #[inline(never)]
@@ -587,6 +587,14 @@ pub extern "C" fn OS_GetInitArenaLo(arena_index: u32) -> u32 {
     }
 }
 
+/*(asm-corpus-filename: arm9/main/OS_SpinWait, objdump-symbol-name: arm9_bin/OS_SpinWait)DONE('os_system')*/
+#[inline(never)]
+#[unsafe(link_section = ".text.origaddr.0207B854")]
+#[unsafe(no_mangle)]
+pub extern "C" fn OS_SpinWait(cycles: u32) {
+    OS_SpinWait_ASM(cycles)
+}
+
 #[unsafe(link_section = ".rodata.origaddr.020B2B9C")]
 pub static DYNAMIC_CALLBACK_INDEX_TO_BOUND_IRQ_INDEX: [u16; OSi_IRQ_CALLBACK_MAX] = [
     REG_IE_DMA_0_FINISHED_SHIFT as u16,
@@ -631,6 +639,15 @@ armv4t => {
 
 /* ====== ARM7 ====== */
 
+use crate::svc::SVC_WaitByLoop;
+
+/*(asm-corpus-filename: arm7/wram/sub_037FDD64, objdump-symbol-name: arm7_bin/OS_SpinWait)DONE('os_system')*/
+#[inline(never)]
+#[unsafe(link_section = ".text.wram.origaddr.037FDD64")]
+#[unsafe(no_mangle)]
+pub extern "C" fn OS_SpinWait(cycles: u32) {
+    SVC_WaitByLoop(cycles as i32 / 4);
+}
 
 /*cfg_select*/ } _
 => {} }
