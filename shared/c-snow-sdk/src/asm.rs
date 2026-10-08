@@ -40,3 +40,15 @@ pub fn OS_CpuRestoreIrq_ASM(state: u32) -> u32 {
     prev
 }
 
+#[inline(always)]
+#[instruction_set(arm::t32)]
+pub fn SVC_WaitByLoop_ASM(count: i32) {
+    unsafe {
+        core::arch::asm!(
+            "svc #3",
+            inout("r0") count => _,
+            options(nostack, preserves_flags),
+        );
+    }
+}
+
