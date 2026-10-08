@@ -18,15 +18,15 @@ Example:
 many_spans! {
     #[repr(C)]
     pub struct Example {
-        start SomeValuesViewOnly // can't be instantiated
-        start* SomeValues // can be instantiated
+        +SomeValuesViewOnly // can't be instantiated
+        +SomeValues* // can be instantiated
             a: u32,
             b: u32,
-            stop SomeValuesViewOnly
-            stop SomeValues
-        start* _Empty
+        SomeValuesViewOnly
+        SomeValues
+        +_Empty*
             _empty: PhantomData<()>,
-            stop _Empty
+        _Empty
     }
 }
 
@@ -138,15 +138,15 @@ use many_spans::{imply, many_spans};
 many_spans! {
     #[repr(C)]
     pub struct Table_ {
-        start* Arm7
+        +Arm7*
             pub dma: [Cb; 4],
-        start* Arm9
-        start Timers
+        +Arm9*
+        +Timers
             pub timers: [Cb; 4],
-        stop Timers
-        stop Arm7
+        Timers
+        Arm7
             pub vcount: [Cb; 1],
-        stop Arm9
+        Arm9
     }
 }
 

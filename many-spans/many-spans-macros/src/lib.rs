@@ -26,11 +26,6 @@ pub fn many_spans(input: TokenStream) -> TokenStream {
     }
 }
 
-enum MarkerKind {
-    Start,
-    Stop,
-}
-
 enum Entry {
     Start {
         attrs: Vec<Attribute>,
@@ -66,33 +61,35 @@ impl Parse for SpanStructDef {
         while !content.is_empty() {
             let attrs = content.call(Attribute::parse_outer)?;
 
-            if let Some(kind) = peek_marker(&content) {
-                content.parse::<Ident>()?;
-                let star: Option<Token![*]> = content.parse()?;
+            if content.peek(Token![+]) {
+                content.parse::<Token![+]>()?;
                 let label: Ident = content.parse()?;
+                let star: Option<Token![*]> = content.parse()?;
                 content.parse::<Option<Token![,]>>()?;
-                entries.push(match (kind, star) {
-                    (MarkerKind::Start, star) => Entry::Start {
-                        attrs,
-                        instantiable: star.is_some(),
-                        label,
-                    },
-                    (MarkerKind::Stop, Some(star)) => {
-                        return Err(Error::new(
-                            star.span(),
-                            "`*` is only allowed on `start` markers",
-                        ));
-                    },
-                    (MarkerKind::Stop, None) => match attrs.first() {
-                        Some(a) => {
-                            return Err(Error::new(
-                                a.span(),
-                                "attributes are not allowed on `stop` markers",
-                            ));
-                        },
-                        None => Entry::Stop { label },
-                    },
+                entries.push(Entry::Start {
+                    attrs,
+                    instantiable: star.is_some(),
+                    label,
                 });
+                continue;
+            }
+
+            if peek_stop(&content) {
+                let label: Ident = content.parse()?;
+                if let Some(a) = attrs.first() {
+                    return Err(Error::new(
+                        a.span(),
+                        format!("attributes are not allowed on span stops (`{label}`)"),
+                    ));
+                }
+                if let Some(star) = content.parse::<Option<Token![*]>>()? {
+                    return Err(Error::new(
+                        star.span(),
+                        format!("`*` is only allowed on span starts (`+{label}*`)"),
+                    ));
+                }
+                content.parse::<Option<Token![,]>>()?;
+                entries.push(Entry::Stop { label });
                 continue;
             }
 
@@ -115,15 +112,9 @@ impl Parse for SpanStructDef {
     }
 }
 
-fn peek_marker(input: ParseStream) -> Option<MarkerKind> {
+fn peek_stop(input: ParseStream) -> bool {
     let fork = input.fork();
-    let kw: Ident = fork.parse().ok()?;
-    let kind = match kw.to_string().as_str() {
-        "start" => MarkerKind::Start,
-        "stop" => MarkerKind::Stop,
-        _ => return None,
-    };
-    (fork.peek(Ident::peek_any) || fork.peek(Token![*])).then_some(kind)
+    fork.parse::<Ident>().is_ok() && !fork.peek(Token![:])
 }
 
 struct SpanDef {
@@ -300,7 +291,7 @@ fn validate(
                     for a in &inst_attrs {
                         errs.push(
                             a,
-                            "only doc comments are allowed on `start`; attributes are only real when the span represents an instantiable `start*`",
+                            format!("only doc comments are allowed on `+{label}`; attributes are only real when the span is instantiable (`+{label}*`)"),
                         );
                     }
                 }
@@ -332,7 +323,7 @@ fn validate(
                 match span_defs.iter_mut().find(|s| s.ident == label) {
                     None => errs.push(
                         &label,
-                        format!("`stop {label}` has no matching `start {label}`"),
+                        format!("`{label}` stops an undefined span (start a span with `+{label}`)"),
                     ),
                     Some(s) if s.end.is_some() => {
                         errs.push(&label, format!("span `{label}` is already stopped"))
@@ -477,7 +468,7 @@ fn expand_span_types(out_def: &OutDef, span_defs: &[SpanDef]) -> TokenStream2 {
             let span_name = span_name_ident.unraw().to_string();
             let msg = LitStr::new(
                 &format!(
-                    "span `{span_name}` can't be instantiated; change it to instantiable by `start*` or use `{struct_name}!({span_name} view)`"
+                    "span `{span_name}` can't be instantiated; make it instantiable with `+{span_name}*` or use `{struct_name}!({span_name} view)`"
                 ),
                 span_name_ident.span(),
             );
