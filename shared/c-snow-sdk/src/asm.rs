@@ -51,7 +51,7 @@ pub fn SVC_SoftReset_ASM() {
             lateout("r0") _,
             lateout("r1") _,
             lateout("r3") _,
-            options(nostack, preserves_flags),
+            options(preserves_flags),
         );
     }
 }
@@ -63,7 +63,7 @@ pub fn SVC_WaitByLoop_ASM(count: i32) {
         core::arch::asm!(
             "svc #3",
             inout("r0") count => _,
-            options(nostack, preserves_flags),
+            options(preserves_flags),
         );
     }
 }
@@ -81,7 +81,6 @@ pub fn SVC_IntrWait_ASM(discard_old: u32, irqs_mask: u32) {
             inout("r2") REG_BASE => _,
             lateout("r3") _,
             lateout("r12") _,
-            options(nostack),
         );
     }
 }
@@ -96,7 +95,7 @@ pub fn SVC_VBlankIntrWait_ASM() {
             lateout("r0") _,
             lateout("r1") _,
             lateout("r3") _,
-            options(nostack, preserves_flags),
+            options(preserves_flags),
         );
     }
 }
@@ -110,7 +109,7 @@ pub fn SVC_Halt_ASM() {
             lateout("r0") _,
             lateout("r1") _,
             lateout("r3") _,
-            options(nostack, preserves_flags),
+            options(preserves_flags),
         );
     }
 }
@@ -124,7 +123,7 @@ pub fn SVC_Sleep_ASM() {
             lateout("r0") _,
             lateout("r1") _,
             lateout("r3") _,
-            options(nostack, preserves_flags),
+            options(preserves_flags),
         );
     }
 }
@@ -138,7 +137,7 @@ pub fn SVC_SoundBias_ASM(direction: u32, delay: u32) {
             inout("r0") direction => _,
             inout("r1") delay => _,
             lateout("r3") _,
-            options(nostack, preserves_flags),
+            options(preserves_flags),
         );
     }
 }
@@ -155,7 +154,7 @@ pub fn SVC_Div_ASM(numerator: i32, denominator: i32) -> (i32, i32, u32) {
             inout("r0") numerator => quotient,
             inout("r1") denominator => remainder,
             lateout("r3") abs_quotient,
-            options(nostack, preserves_flags),
+            options(preserves_flags),
         );
     }
     (quotient, remainder, abs_quotient)
@@ -173,7 +172,7 @@ pub fn SVC_CpuSet_ASM(src: *const c_void, dst: *mut c_void, control: u32) -> (*c
             inout("r0") src => src_advanced_only_in_32bit_mode_because_16bit_mode_indexes_with_r5_and_also_32bit_fill_mode_advances_this_by_4bytes_only_while_copy_mode_advances_to_the_end_for_similar_reason_as_cpufastset,
             inout("r1") dst => dst_advanced_only_in_32bit_mode_because_16bit_mode_indexes_with_r5,
             lateout("r3") _,
-            options(nostack, preserves_flags),
+            options(preserves_flags),
         );
     }
     (src_advanced_only_in_32bit_mode_because_16bit_mode_indexes_with_r5_and_also_32bit_fill_mode_advances_this_by_4bytes_only_while_copy_mode_advances_to_the_end_for_similar_reason_as_cpufastset, dst_advanced_only_in_32bit_mode_because_16bit_mode_indexes_with_r5)
@@ -193,7 +192,7 @@ pub fn SVC_CpuFastSet_ASM(src: *const c_void, dst: *mut c_void, control: u32) ->
             inout("r0") src => src_advanced_only_in_copy_mode_because_you_read_and_fill_with_that_one_value_in_the_other_mode,
             inout("r1") dst => dst_advanced,
             lateout("r3") _,
-            options(nostack, preserves_flags),
+            options(preserves_flags),
         );
     }
     (src_advanced_only_in_copy_mode_because_you_read_and_fill_with_that_one_value_in_the_other_mode, dst_advanced)
@@ -211,7 +210,7 @@ pub fn SVC_Sqrt_ASM(value: u32) -> u32 {
             inout("r0") value => root,
             lateout("r1") _,
             lateout("r3") _,
-            options(nostack, preserves_flags),
+            options(preserves_flags),
         );
     }
     root
@@ -230,7 +229,7 @@ pub fn SVC_CRC16_ASM(seed: u32, data: *const c_void, len: u32) -> (u32, *const c
             inout("r0") seed => crc,
             inout("r1") data => data_end,
             lateout("r3") last_halfword,
-            options(nostack, preserves_flags),
+            options(preserves_flags),
         );
     }
     (crc, data_end, last_halfword)
@@ -246,7 +245,7 @@ pub fn SVC_IsMainMemoryExtended_ASM() -> u32 {
             lateout("r0") extended,
             lateout("r1") _,
             lateout("r3") _,
-            options(nostack, preserves_flags),
+            options(preserves_flags),
         );
     }
     extended
@@ -262,7 +261,7 @@ pub fn SVC_BitUnPack_ASM(src: *const c_void, dst: *mut c_void, info: *const c_vo
             inout("r0") src => _,
             inout("r1") dst => _,
             lateout("r3") _,
-            options(nostack, preserves_flags),
+            options(preserves_flags),
         );
     }
 }
@@ -277,7 +276,7 @@ pub fn SVC_LZ77UnCompLdrReadWriteBytes_ASM(src: *const c_void, dst: *mut c_void)
             inout("r0") src => _,
             inout("r1") dst => _,
             lateout("r3") _,
-            options(nostack, preserves_flags),
+            options(preserves_flags),
         );
     }
 }
@@ -293,7 +292,7 @@ pub fn SVC_LZ77UnCompCbReadWriteHalfwords_ASM(src: *const c_void, dst: *mut c_vo
             inout("r0") src => result,
             inout("r1") dst => _,
             inout("r3") callbacks => _,
-            options(nostack, preserves_flags),
+            options(preserves_flags),
         );
     }
     result
@@ -310,7 +309,7 @@ pub fn SVC_HuffmanUnCompCbReadWriteWords_ASM(src: *const c_void, dst: *mut c_voi
             inout("r0") src => result,
             inout("r1") dst => _,
             inout("r3") callbacks => _,
-            options(nostack, preserves_flags),
+            options(preserves_flags),
         );
     }
     result
@@ -326,7 +325,7 @@ pub fn SVC_RLUnCompLdrReadWriteBytes_ASM(src: *const c_void, dst: *mut c_void) {
             inout("r0") src => _,
             inout("r1") dst => _,
             lateout("r3") _,
-            options(nostack, preserves_flags),
+            options(preserves_flags),
         );
     }
 }
@@ -342,7 +341,7 @@ pub fn SVC_RLUnCompCbReadWriteHalfwords_ASM(src: *const c_void, dst: *mut c_void
             inout("r0") src => result,
             inout("r1") dst => _,
             inout("r3") callbacks => _,
-            options(nostack, preserves_flags),
+            options(preserves_flags),
         );
     }
     result
@@ -358,7 +357,7 @@ pub fn SVC_QuarterSineLUTResolution64_ASM(index: u32) -> i32 {
             inout("r0") index => value,
             lateout("r1") _,
             lateout("r3") _,
-            options(nostack, preserves_flags),
+            options(preserves_flags),
         );
     }
     value
@@ -375,7 +374,7 @@ pub fn SVC_OctMultFracLUTResolution768_ASM(index: u32) -> u32 {
             inout("r0") index => value,
             lateout("r1") _,
             lateout("r3") _,
-            options(nostack, preserves_flags),
+            options(preserves_flags),
         );
     }
     value
@@ -397,7 +396,7 @@ pub fn SVC_VolumeLogToMulLinLUTResolution724_ASM(index: u32) -> u32 {
             inout("r0") index => value,
             lateout("r1") _,
             lateout("r3") _,
-            options(nostack, preserves_flags),
+            options(preserves_flags),
         );
     }
     value

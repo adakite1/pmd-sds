@@ -3,6 +3,30 @@ armv5te => {
 
 /* ====== ARM9 ====== */
 
+use core::ffi::c_void;
+
+unsafe extern "C" {
+    pub safe fn SVC_SoftReset();
+    pub safe fn SVC_WaitByLoop(count: i32);
+    pub safe fn SVC_IntrWait(discard_old: u32, irqs_mask: u32);
+    pub safe fn SVC_VBlankIntrWait();
+    pub safe fn SVC_Halt();
+    pub safe fn SVC_Div(numerator: i32, denominator: i32) -> i32;
+    pub safe fn SVC_Mod(numerator: i32, denominator: i32) -> i32;
+    pub safe fn SVC_CpuSet(src: *const c_void, dst: *mut c_void, control: u32);
+    pub safe fn SVC_CpuFastSet(src: *const c_void, dst: *mut c_void, control: u32);
+    pub safe fn SVC_Sqrt(value: u32) -> u32;
+    pub safe fn SVC_CRC16(seed: u32, data: *const c_void, len: u32) -> u32;
+    pub safe fn SVC_IsMainMemoryExtended() -> u32;
+    pub safe fn SVC_BitUnPack(src: *const c_void, dst: *mut c_void, info: *const c_void);
+    /* name is about cb vs direct ldr from memory, the read used is `ldrb` */
+    pub safe fn SVC_LZ77UnCompLdrReadWriteBytes(src: *const c_void, dst: *mut c_void);
+    pub safe fn SVC_LZ77UnCompCbReadWriteHalfwords(src: *const c_void, dst: *mut c_void, param: u32, callbacks: *const c_void) -> i32;
+    pub safe fn SVC_HuffmanUnCompCbReadWriteWords(src: *const c_void, dst: *mut c_void, tree_buffer: *mut c_void, callbacks: *const c_void) -> i32;
+    /* name is about cb vs direct ldr from memory, the read used is `ldrb` */
+    pub safe fn SVC_RLUnCompLdrReadWriteBytes(src: *const c_void, dst: *mut c_void);
+    pub safe fn SVC_RLUnCompCbReadWriteHalfwords(src: *const c_void, dst: *mut c_void, param: u32, callbacks: *const c_void) -> i32;
+}
 
 /*cfg_select*/ }
 armv4t => {
