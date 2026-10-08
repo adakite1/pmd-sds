@@ -23,6 +23,8 @@ pub mod pxi;
 
 pub mod sys;
 
+pub mod svc;
+
 #[cfg(armv4t)]
 #[unsafe(link_section = ".text.wram")]
 #[unsafe(no_mangle)]
