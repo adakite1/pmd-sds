@@ -204,6 +204,11 @@ impl<T: Copy, RW: RWT> Volatile<T, RW> {
     }
 
     #[inline(always)]
+    pub const fn as_ptr(&self) -> *const T {
+        self.ptr
+    }
+
+    #[inline(always)]
     pub fn get(&self) -> T {
         unsafe { RW::read(self.ptr) }
     }
@@ -231,6 +236,11 @@ impl<T: Copy, RW: RWT> VolatileMut<T, RW> {
     }
 
     #[inline(always)]
+    pub const fn as_ptr(&self) -> *mut T {
+        self.ptr
+    }
+
+    #[inline(always)]
     pub fn get(&self) -> T {
         unsafe { RW::read(self.ptr) }
     }
@@ -238,6 +248,30 @@ impl<T: Copy, RW: RWT> VolatileMut<T, RW> {
     #[inline(always)]
     pub fn set(&self, value: T) -> T {
         unsafe { RW::write(self.ptr, value) }
+    }
+}
+
+impl<T, const N: usize, RW: RWT> Volatile<[T; N], RW> {
+    #[inline(always)]
+    pub const fn len(&self) -> usize {
+        N
+    }
+
+    #[inline(always)]
+    pub const fn is_empty(&self) -> bool {
+        N == 0
+    }
+}
+
+impl<T, const N: usize, RW: RWT> VolatileMut<[T; N], RW> {
+    #[inline(always)]
+    pub const fn len(&self) -> usize {
+        N
+    }
+
+    #[inline(always)]
+    pub const fn is_empty(&self) -> bool {
+        N == 0
     }
 }
 
@@ -522,7 +556,7 @@ impl<E, RW: RWT> WithRW for ElemPtrs<E, Vol<RW>> {
     type WithRW<R: RWT> = ElemPtrs<E, Vol<R>>;
     #[inline(always)]
     fn with_rw<R: RWT>(self) -> ElemPtrs<E, Vol<R>> {
-        ElemPtrs { base: self.base, range: self.range, _w: PhantomData }
+        ElemPtrs { base: self.base, range: self.range, init_start: self.init_start, init_len: self.init_len, _w: PhantomData }
     }
 }
 
@@ -531,13 +565,20 @@ impl<E, RW: RWT> WithRW for ElemPtrs<E, Vol<RW>> {
 pub struct ElemPtrs<E, W = Raw> {
     base: E,
     range: Range<usize>,
+    init_start: usize,
+    init_len: usize,
     _w: PhantomData<W>,
 }
 
 impl<E> ElemPtrs<E, Raw> {
     #[inline(always)]
     fn new(base: E, range: Range<usize>) -> Self {
-        Self { base, range, _w: PhantomData }
+        let init_len = if range.start < range.end {
+            range.end.wrapping_sub(range.start)
+        } else {
+            0
+        };
+        Self { base, init_start: range.start, init_len, range, _w: PhantomData }
     }
 }
 
@@ -549,6 +590,18 @@ impl<E: Ptr, W: VolWrap<E>> ElemPtrs<E, W> {
         } else {
             0
         }
+    }
+
+    #[inline(always)]
+    #[track_caller]
+    pub fn index(&self, idx: usize) -> W::Output {
+        KnownLen(self.init_len).check_index(idx);
+        W::wrap(self.base.wrapping_add_(self.init_start.wrapping_add(idx)))
+    }
+
+    #[inline(always)]
+    pub fn as_ptr(&self) -> E {
+        self.base.wrapping_add_(self.init_start)
     }
 }
 
@@ -636,7 +689,7 @@ where
     type IntoVolatile = ElemPtrs<E, Vol>;
     #[inline(always)]
     fn into_volatile(self) -> ElemPtrs<E, Vol> {
-        ElemPtrs { base: self.base, range: self.range, _w: PhantomData }
+        ElemPtrs { base: self.base, range: self.range, init_start: self.init_start, init_len: self.init_len, _w: PhantomData }
     }
 }
 
