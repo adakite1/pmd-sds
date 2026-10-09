@@ -19,8 +19,9 @@ use syn::{
 
 #[proc_macro]
 pub fn many_spans(input: TokenStream) -> TokenStream {
+    let source = proc_macro::Span::call_site().source_text().unwrap_or_else(|| input.to_string());
     let def = parse_macro_input!(input as SpanStructDef);
-    match expand(def) {
+    match expand(def, fnv1a_128(source.as_bytes())) {
         Ok(ts) => ts.into(),
         Err(e) => e.to_compile_error().into(),
     }
@@ -410,7 +411,7 @@ struct OutDef<'a> {
     passthrough: Passthrough,
 }
 
-fn expand(def: SpanStructDef) -> Result<TokenStream2> {
+fn expand(def: SpanStructDef, source_hash: u128) -> Result<TokenStream2> {
     let SpanStructDef {
         attrs,
         vis,
@@ -438,7 +439,7 @@ fn expand(def: SpanStructDef) -> Result<TokenStream2> {
     let label_names = span_defs
         .iter()
         .map(|s| LitStr::new(&s.ident.unraw().to_string(), s.ident.span()));
-    let span_types = expand_span_types(&out_def, &span_defs);
+    let span_types = expand_span_types(&out_def, &span_defs, source_hash);
 
     Ok(quote! {
         #(#attrs)*
@@ -457,7 +458,7 @@ fn expand(def: SpanStructDef) -> Result<TokenStream2> {
     })
 }
 
-fn expand_span_types(out_def: &OutDef, span_defs: &[SpanDef]) -> TokenStream2 {
+fn expand_span_types(out_def: &OutDef, span_defs: &[SpanDef], source_hash: u128) -> TokenStream2 {
     let OutDef {
         krate,
         ident,
@@ -466,11 +467,7 @@ fn expand_span_types(out_def: &OutDef, span_defs: &[SpanDef]) -> TokenStream2 {
         ..
     } = out_def;
     let struct_name = ident.unraw().to_string();
-    let macro_name = format_ident!("__{}{}_span_types", struct_name.len(), struct_name);
-    let reexport_vis = match vis {
-        Visibility::Inherited => quote!(),
-        _ => quote!(pub(crate)),
-    };
+    let macro_name = format_ident!("__{}{}_span_types_{:032x}", struct_name.len(), struct_name, source_hash);
 
     let arms = span_defs.iter().map(|s| {
         let span_name_ident = &s.ident;
@@ -496,14 +493,15 @@ fn expand_span_types(out_def: &OutDef, span_defs: &[SpanDef]) -> TokenStream2 {
 
     quote! {
         #(#cfgs)*
-        #[allow(unused_macros)]
+        #[macro_export]
+        #[doc(hidden)]
         macro_rules! #macro_name {
             #(#arms)*
         }
 
         #(#cfgs)*
         #[allow(unused_imports)]
-        #reexport_vis use #macro_name as #ident;
+        #vis use #macro_name as #ident;
     }
 }
 
