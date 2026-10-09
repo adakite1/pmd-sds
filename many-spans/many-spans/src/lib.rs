@@ -6,7 +6,10 @@
 
 #![no_std]
 
+mod pad;
+
 pub use many_spans_macros::many_spans;
+pub use pad::Padding;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub struct Span {

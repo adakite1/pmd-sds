@@ -566,10 +566,10 @@ fn expand_span(out_def: &OutDef, id: usize, s: &SpanDef) -> TokenStream2 {
         let (prev_ident, prev_ty, cur_ident) = (&prev.ident, &prev.ty, &cur.ident);
         let pad = format_ident!("__pad{}", i + 1);
         view_fields.push(quote! {
-            #pad: [::core::mem::MaybeUninit<u8>; {
+            #pad: #krate::Padding<{
                 ::core::mem::offset_of!(#ident, #cur_ident)
                     - (::core::mem::offset_of!(#ident, #prev_ident) + ::core::mem::size_of::<#prev_ty>())
-            }]
+            }>
         });
         view_fields.push(quote!(#cur));
     }
