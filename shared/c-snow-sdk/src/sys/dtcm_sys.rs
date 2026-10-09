@@ -1,10 +1,10 @@
-//! Top 0x40 bytes of DTCM reserved for SDK and BIOS uses.
+//! Top 0x40 bytes of DTCM reserved for SDK and BIOS uses. The arm7 version is in its WRAM.
 //!
 //! Most constants here are ordered top-down by address within that 0x40 bytes slice.
 
-pub const DTCM_TOP: u32 = 0x027E4000; //NOTE: This should be the same value as the __dtcm_top value defined in the linker script, make sure to keep it up to date
+pub const DTCM_TOP: u32 = 0x027E4000; //NOTE: This should be the same value as the __dtcm_top value defined in the arm9 linker script, make sure to keep it up to date
 
-pub const IRQ_HANDLER_POINTER: u32 = DTCM_TOP - 4;
+pub const IRQ_HANDLER_POINTER_ARM9: u32 = DTCM_TOP - 4;
 
 /// After the handler finishes its work, it sets this. DMA and timer callbacks have this done for them by [`crate::os::OSi_DynamicIrqCallback`], while other handlers do this by themselves after finishing work.
 ///
@@ -24,5 +24,5 @@ pub const IRQ_HANDLER_POINTER: u32 = DTCM_TOP - 4;
 /// so it always wakes immediately and no wakeups are missed.
 /// Here on the NDS, we only have to worry about IRQ interrupting our code, not really massive paralleism. However, for some reason, OS_WaitIrq disables Irqs at first, but then
 /// turns it *back on before calling OS_SleepThread to enqueue itself, letting Irqs potentially run before it enqueues itself*.
-pub const IRQ_FUTEX_BITS: u32 = DTCM_TOP - 8;
+pub const IRQ_FUTEX_BITS_ARM9: u32 = DTCM_TOP - 8;
 

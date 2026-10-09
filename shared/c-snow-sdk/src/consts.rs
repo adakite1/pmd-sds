@@ -21,8 +21,14 @@ pub const ARM9_FIFO_HS_SPINWAIT_FOR_SUBPROC_NEXT_NUMBER_BEFORE_RESET: u32 = 1000
 // success).
 pub const DMA_CHANNELS_COUNT: usize = REG_IE_DMA_3_FINISHED_SHIFT - REG_IE_DMA_0_FINISHED_SHIFT + 1;
 pub use crate::sys::dtcm_sys::DTCM_TOP;
-pub use crate::sys::dtcm_sys::IRQ_FUTEX_BITS;
-pub use crate::sys::dtcm_sys::IRQ_HANDLER_POINTER;
+#[cfg(armv5te)]
+pub use crate::sys::dtcm_sys::IRQ_FUTEX_BITS_ARM9 as IRQ_FUTEX_BITS;
+#[cfg(armv5te)]
+pub use crate::sys::dtcm_sys::IRQ_HANDLER_POINTER_ARM9 as IRQ_HANDLER_POINTER;
+#[cfg(armv4t)]
+pub use crate::sys::wram_arm7_sys::IRQ_FUTEX_BITS_ARM7 as IRQ_FUTEX_BITS;
+#[cfg(armv4t)]
+pub use crate::sys::wram_arm7_sys::IRQ_HANDLER_POINTER_ARM7 as IRQ_HANDLER_POINTER;
 pub const OSi_IRQ_CALLBACK_MAX: usize = 8;
 pub const PXI_MAX_FIFO_MESSAGE_TAG: usize = 32;
 

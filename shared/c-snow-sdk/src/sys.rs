@@ -3,6 +3,8 @@
 //! sys/dtcm_sys.rs also discusses the 0x40 region at the top of DTCM in-depth and is closely related since the SDK claims both very personally. Since the BIOS can conveniently find the DTCM area through
 //! querying the subprocessor (CP15 c9) and DTCM is fast as well, it's a good place for the BIOS to reach the SDK and vice-versa.
 
+pub mod wram_arm7_sys;
+
 pub mod dtcm_sys;
 
 pub mod red;
