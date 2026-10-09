@@ -143,29 +143,35 @@ macro_rules! imply {
 
 #[macro_export]
 macro_rules! guard {
-    ($v:ident if $($full:ident)::+ with $span:ident => $ret:ty $body:block $($else:tt)*) => {
-        $crate::guard!(@expand [*const] [view] ($v = $v) [] [$($full)::+] $span; $ret; $body; $($else)*)
+    ($v:ident if $($rest:tt)+) => {
+        $crate::guard!(@path [*const] [view] ($v = $v) [] [] $($rest)+)
     };
-    ($v:ident mut if $($full:ident)::+ with $span:ident => $ret:ty $body:block $($else:tt)*) => {
-        $crate::guard!(@expand [*mut] [view_mut] ($v = $v) [] [$($full)::+] $span; $ret; $body; $($else)*)
+    ($v:ident mut if $($rest:tt)+) => {
+        $crate::guard!(@path [*mut] [view_mut] ($v = $v) [] [] $($rest)+)
     };
-    (($name:ident = $e:expr $(, $($b:ident)+ : $t:ty = $x:expr)* $(,)?) if $($full:ident)::+ with $span:ident => $ret:ty $body:block $($else:tt)*) => {
-        $crate::guard!(@expand [*const] [view] ($name = $e) [$($($b)+ : $t = $x),*] [$($full)::+] $span; $ret; $body; $($else)*)
+    (($name:ident = $e:expr $(, $($b:ident)+ : $t:ty = $x:expr)* $(,)?) if $($rest:tt)+) => {
+        $crate::guard!(@path [*const] [view] ($name = $e) [$($($b)+ : $t = $x),*] [] $($rest)+)
     };
-    (($name:ident = $e:expr $(, $($b:ident)+ : $t:ty = $x:expr)* $(,)?) mut if $($full:ident)::+ with $span:ident => $ret:ty $body:block $($else:tt)*) => {
-        $crate::guard!(@expand [*mut] [view_mut] ($name = $e) [$($($b)+ : $t = $x),*] [$($full)::+] $span; $ret; $body; $($else)*)
+    (($name:ident = $e:expr $(, $($b:ident)+ : $t:ty = $x:expr)* $(,)?) mut if $($rest:tt)+) => {
+        $crate::guard!(@path [*mut] [view_mut] ($name = $e) [$($($b)+ : $t = $x),*] [] $($rest)+)
     };
-    (($name:ident $(, $($b:ident)+ : $t:ty = $x:expr)* $(,)?) if $($full:ident)::+ with $span:ident => $ret:ty $body:block $($else:tt)*) => {
-        $crate::guard!(@expand [*const] [view] ($name = $name) [$($($b)+ : $t = $x),*] [$($full)::+] $span; $ret; $body; $($else)*)
+    (($name:ident $(, $($b:ident)+ : $t:ty = $x:expr)* $(,)?) if $($rest:tt)+) => {
+        $crate::guard!(@path [*const] [view] ($name = $name) [$($($b)+ : $t = $x),*] [] $($rest)+)
     };
-    (($name:ident $(, $($b:ident)+ : $t:ty = $x:expr)* $(,)?) mut if $($full:ident)::+ with $span:ident => $ret:ty $body:block $($else:tt)*) => {
-        $crate::guard!(@expand [*mut] [view_mut] ($name = $name) [$($($b)+ : $t = $x),*] [$($full)::+] $span; $ret; $body; $($else)*)
+    (($name:ident $(, $($b:ident)+ : $t:ty = $x:expr)* $(,)?) mut if $($rest:tt)+) => {
+        $crate::guard!(@path [*mut] [view_mut] ($name = $name) [$($($b)+ : $t = $x),*] [] $($rest)+)
     };
-    (@expand [$($ptr:tt)+] [$view:ident] ($name:ident = $e:expr) [$($($b:ident)+ : $t:ty = $x:expr),*] [$($full:ident)::+] $span:ident; $ret:ty; $body:block; $($else:tt)*) => {{
+    (@path [$($ptr:tt)+] [$view:ident] ($name:ident = $e:expr) [$($bind:tt)*] [$($full:tt)+] with $span:ident => $ret:ty $body:block $($else:tt)*) => {
+        $crate::guard!(@expand [$($ptr)+] [$view] ($name = $e) [$($bind)*] [$($full)+] $span; $ret; $body; $($else)*)
+    };
+    (@path [$($ptr:tt)+] [$view:ident] ($name:ident = $e:expr) [$($bind:tt)*] [$($full:tt)*] $seg:tt $($rest:tt)+) => {
+        $crate::guard!(@path [$($ptr)+] [$view] ($name = $e) [$($bind)*] [$($full)* $seg] $($rest)+)
+    };
+    (@expand [$($ptr:tt)+] [$view:ident] ($name:ident = $e:expr) [$($($b:ident)+ : $t:ty = $x:expr),*] [$($full:tt)+] $span:ident; $ret:ty; $body:block; $($else:tt)*) => {{
         #[inline(always)]
-        fn __call<I: $crate::In<S = $($full)::+>>($name: $($ptr)+ I $(, $($b)+ : $t)*) -> $ret {
-            if const { unsafe { $crate::serves::<I, { $($full)::+!($span id) }>() } } {
-                let $name = unsafe { $crate::$view::<I, { $($full)::+!($span id) }>($name) };
+        fn __call<I: $crate::In<S = $($full)+>>($name: $($ptr)+ I $(, $($b)+ : $t)*) -> $ret {
+            if const { unsafe { $crate::serves::<I, { $($full)+!($span id) }>() } } {
+                let $name = unsafe { $crate::$view::<I, { $($full)+!($span id) }>($name) };
                 $body
             } else {
                 $($else)*
