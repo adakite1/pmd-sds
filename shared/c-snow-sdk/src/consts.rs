@@ -1,3 +1,6 @@
+pub mod arm7;
+pub mod arm9;
+
 pub const ARM7_FIFO_HS_MAINPROC_MUST_RESPOND_WITHIN: u32 = 1000; // CPU cycles,
 // with each `swi 3` spinloop taking ~4 clock cycles, translating into
 // approximately that value divided by 4.
@@ -29,8 +32,15 @@ pub use crate::sys::dtcm_sys::IRQ_HANDLER_POINTER_ARM9 as IRQ_HANDLER_POINTER;
 pub use crate::sys::wram_arm7_sys::IRQ_FUTEX_BITS_ARM7 as IRQ_FUTEX_BITS;
 #[cfg(armv4t)]
 pub use crate::sys::wram_arm7_sys::IRQ_HANDLER_POINTER_ARM7 as IRQ_HANDLER_POINTER;
-pub const OSi_IRQ_CALLBACK_MAX: usize = 8;
+#[cfg(armv5te)]
+pub use crate::consts::arm9::OSi_IRQ_CALLBACK_MAX_ARM9 as OSi_IRQ_CALLBACK_MAX;
+#[cfg(armv4t)]
+pub use crate::consts::arm7::OSi_IRQ_CALLBACK_MAX_ARM7 as OSi_IRQ_CALLBACK_MAX;
 pub const PXI_MAX_FIFO_MESSAGE_TAG: usize = 32;
+#[cfg(armv5te)]
+pub use crate::consts::arm9::PXI_PROC_ARM9 as PXI_PROC;
+#[cfg(armv4t)]
+pub use crate::consts::arm7::_PXI_PROC_ARM7 as PXI_PROC;
 
 pub const  REG_FIFO_CNT_ENABLE_SHIFT: usize = 15;
 pub const  REG_FIFO_CNT_ERROR_SHIFT: usize = 14;
@@ -79,7 +89,7 @@ pub const _REG_IE_TIMER_1_OVFLOW_SHIFT: usize = 4;
 pub const  REG_IE_TIMER_0_OVFLOW_SHIFT: usize = 3;
 pub const _REG_IE_VCOUNT_MATCH_SHIFT: usize = 2;
 pub const _REG_IE_HBLANK_SHIFT: usize = 1;
-pub const _REG_IE_VBLANK_SHIFT: usize = 0;
+pub const  REG_IE_VBLANK_SHIFT: usize = 0;
 
 /** 0x01000000 
  *  ARM7-only  */ pub const _REG_IE_CHECK_WIRELESS_CHIP_MASK: u32 = 1 << _REG_IE_CHECK_WIRELESS_CHIP_SHIFT;
@@ -108,10 +118,12 @@ pub const _REG_IE_VBLANK_SHIFT: usize = 0;
 /** 0x00000008 */ pub const _REG_IE_TIMER_0_OVFLOW_MASK: u32 = 1 << REG_IE_TIMER_0_OVFLOW_SHIFT;
 /** 0x00000004 */ pub const _REG_IE_VCOUNT_MATCH_MASK: u32 = 1 << _REG_IE_VCOUNT_MATCH_SHIFT;
 /** 0x00000002 */ pub const _REG_IE_HBLANK_MASK: u32 = 1 << _REG_IE_HBLANK_SHIFT;
-/** 0x00000001 */ pub const _REG_IE_VBLANK_MASK: u32 = 1 << _REG_IE_VBLANK_SHIFT;
+/** 0x00000001 */ pub const _REG_IE_VBLANK_MASK: u32 = 1 << REG_IE_VBLANK_SHIFT;
 
-pub const _REG_IE_ARM7_IRQ_SOURCES_MAX: usize = _REG_IE_CHECK_WIRELESS_CHIP_SHIFT + 1;
-pub const  REG_IE_ARM9_IRQ_SOURCES_MAX: usize = REG_IE_GEOMETRY_FIFO_LEVEL_SHIFT + 1;
+#[cfg(armv5te)]
+pub use crate::consts::arm9::REG_IE_IRQ_SOURCES_MAX_ARM9 as REG_IE_IRQ_SOURCES_MAX;
+#[cfg(armv4t)]
+pub use crate::consts::arm7::REG_IE_IRQ_SOURCES_MAX_ARM7 as REG_IE_IRQ_SOURCES_MAX;
 
 pub const _REG_SYNC_INBOUND_IREQ_ALLOW_SHIFT: usize = 14;
 pub const _REG_SYNC_IREQ_SHIFT: usize = 13;
@@ -158,9 +170,4 @@ pub const OS_CONSOLE_SIZE_4MB: u32 = 0x00000001;
 /// Beyond this is private memory reserved for the hardware debugger when the game is
 /// built and run on the Debug Console with 8 MiB Main RAM.
 pub const HW_MAIN_MEM_DEBUGGER_OFFSET: u32 = 0x00700000;
-
-/* REGNAME.H */
-
-pub const  PXI_PROC_ARM9: usize = 0;
-pub const _PXI_PROC_ARM7: usize = 1;
 
