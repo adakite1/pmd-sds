@@ -122,21 +122,22 @@ macro_rules! imply {
     // ($v:ident : *mut $t:ty => $span:path $body:block) => {
     //     ::core::compile_error!("must have something if imply does not hold")
     // };
-    ($v:ident : *const $t:ty => $span:path $body:block $($else:tt)*) => {
-        if const { unsafe { $crate::serves::<$t, { $span }>() } } {
-            let $v = unsafe { $crate::view::<$t, { $span }>($v) };
+    ($v:ident : *const $t:ty => $($rest:tt)+) => {
+        $crate::imply!(@split [view] $v $t; [] $($rest)+)
+    };
+    ($v:ident : *mut $t:ty => $($rest:tt)+) => {
+        $crate::imply!(@split [view_mut] $v $t; [] $($rest)+)
+    };
+    (@split [$view:ident] $v:ident $t:ty; [$($full:tt)+] :: $span:ident $body:block $($else:tt)*) => {
+        if const { unsafe { $crate::serves::<$t, { $($full)+!($span id) }>() } } {
+            let $v = unsafe { $crate::$view::<$t, { $($full)+!($span id) }>($v) };
             $body
         } else {
             $($else)*
         }
     };
-    ($v:ident : *mut $t:ty => $span:path $body:block $($else:tt)*) => {
-        if const { unsafe { $crate::serves::<$t, { $span }>() } } {
-            let $v = unsafe { $crate::view_mut::<$t, { $span }>($v) };
-            $body
-        } else {
-            $($else)*
-        }
+    (@split [$view:ident] $v:ident $t:ty; [$($full:tt)*] $seg:tt $($rest:tt)+) => {
+        $crate::imply!(@split [$view] $v $t; [$($full)* $seg] $($rest)+)
     };
 }
 
@@ -163,8 +164,8 @@ macro_rules! guard {
     (@expand [$($ptr:tt)+] [$view:ident] ($name:ident = $e:expr) [$($($b:ident)+ : $t:ty = $x:expr),*] [$($full:ident)::+] $span:ident; $ret:ty; $body:block; $($else:tt)*) => {{
         #[inline(always)]
         fn __call<I: $crate::In<S = $($full)::+>>($name: $($ptr)+ I $(, $($b)+ : $t)*) -> $ret {
-            if const { unsafe { $crate::serves::<I, { $($full)::+::$span }>() } } {
-                let $name = unsafe { $crate::$view::<I, { $($full)::+::$span }>($name) };
+            if const { unsafe { $crate::serves::<I, { $($full)::+!($span id) }>() } } {
+                let $name = unsafe { $crate::$view::<I, { $($full)::+!($span id) }>($name) };
                 $body
             } else {
                 $($else)*

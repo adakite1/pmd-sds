@@ -354,6 +354,18 @@ fn fnv1a_128(bytes: &[u8]) -> u128 {
     hash
 }
 
+fn span_id(struct_name: &str, span: &Ident) -> String {
+    format!("{struct_name}::{}", span.unraw())
+}
+
+fn span_id_hash(struct_name: &str, span: &Ident) -> u128 {
+    fnv1a_128(span_id(struct_name, span).as_bytes())
+}
+
+fn span_id_hash_lit(struct_name: &str, span: &Ident) -> LitInt {
+    LitInt::new(&format!("{:#x}", span_id_hash(struct_name, span)), span.span())
+}
+
 fn type_text(ty: &syn::Type) -> String {
     let mut text = quote!(#ty).to_string();
     for (from, to) in [
@@ -422,7 +434,7 @@ fn expand(def: SpanStructDef) -> Result<TokenStream2> {
         .iter()
         .enumerate()
         .map(|(id, s)| expand_span(&out_def, id, s));
-    let label_idents = span_defs.iter().map(|s| &s.ident);
+    let span_idents_hash_lits: Vec<LitInt> = span_defs.iter().map(|s| span_id_hash_lit(&ident.unraw().to_string(), &s.ident)).collect();
     let label_names = span_defs
         .iter()
         .map(|s| LitStr::new(&s.ident.unraw().to_string(), s.ident.span()));
@@ -435,7 +447,7 @@ fn expand(def: SpanStructDef) -> Result<TokenStream2> {
         #(#cfgs)*
         unsafe impl #krate::SpanTable for #ident {
             const SPANS: &'static [#krate::Span] =
-                &[#(<#ident as #krate::HasSpan<{ #ident::#label_idents }>>::SPAN),*];
+                &[#(<#ident as #krate::HasSpan<#span_idents_hash_lits>>::SPAN),*];
             const NAMES: &'static [&'static str] = &[#(#label_names),*];
         }
 
@@ -462,8 +474,9 @@ fn expand_span_types(out_def: &OutDef, span_defs: &[SpanDef]) -> TokenStream2 {
 
     let arms = span_defs.iter().map(|s| {
         let span_name_ident = &s.ident;
+        let span_id_hash_lit = span_id_hash_lit(&struct_name, span_name_ident);
         let instantiation = if s.instantiable {
-            quote!(#krate::InstantiationOf<#ident, { #ident::#span_name_ident }>)
+            quote!(#krate::InstantiationOf<#ident, #span_id_hash_lit>)
         } else {
             let span_name = span_name_ident.unraw().to_string();
             let msg = LitStr::new(
@@ -476,7 +489,8 @@ fn expand_span_types(out_def: &OutDef, span_defs: &[SpanDef]) -> TokenStream2 {
         };
         quote! {
             (#span_name_ident) => { #instantiation };
-            (#span_name_ident view) => { #krate::ViewOf<#ident, { #ident::#span_name_ident }> };
+            (#span_name_ident view) => { #krate::ViewOf<#ident, #span_id_hash_lit> };
+            (#span_name_ident id) => { #span_id_hash_lit };
         }
     });
 
@@ -516,8 +530,8 @@ fn expand_span(out_def: &OutDef, id: usize, s: &SpanDef) -> TokenStream2 {
     let span_field_idents = &out_def.field_idents[first..end];
     let first_field = span_field_idents[0];
     let (docs, inst_attrs) = (&s.docs, &s.inst_attrs);
-    let id_hash = fnv1a_128(format!("{struct_name}::{span_name}").as_bytes());
-    let span_id = LitInt::new(&format!("{id_hash:#x}"), span_name_ident.span());
+    let id_hash = span_id_hash(&struct_name, span_name_ident);
+    let span_id_hash_lit = span_id_hash_lit(&struct_name, span_name_ident);
 
     let label = span_name_ident.to_string();
     let mut sketch =
@@ -616,12 +630,12 @@ fn expand_span(out_def: &OutDef, id: usize, s: &SpanDef) -> TokenStream2 {
             unsafe impl #krate::SpanInstantiation for #inst {
                 type Full = #ident;
                 const SPAN_ID: u128 = #ident::#span_name_ident;
-                const SPAN: #krate::Span = <#ident as #krate::HasSpan<{ #ident::#span_name_ident }>>::SPAN;
+                const SPAN: #krate::Span = <#ident as #krate::HasSpan<#span_id_hash_lit>>::SPAN;
                 const OFFSETS: &'static [::core::option::Option<usize>] = &[#(#offsets),*];
             }
 
             #(#cfgs)*
-            unsafe impl #krate::HasInstantiation<{ #ident::#span_name_ident }> for #ident {
+            unsafe impl #krate::HasInstantiation<#span_id_hash_lit> for #ident {
                 type Instantiation = #inst;
             }
         }
@@ -634,7 +648,7 @@ fn expand_span(out_def: &OutDef, id: usize, s: &SpanDef) -> TokenStream2 {
             #(#docs)*
             #docs_separator
             #[doc = #const_doc]
-            #vis const #span_name_ident: u128 = #span_id;
+            #vis const #span_name_ident: u128 = #span_id_hash_lit;
         }
 
         #[doc = #view_doc]
@@ -646,7 +660,7 @@ fn expand_span(out_def: &OutDef, id: usize, s: &SpanDef) -> TokenStream2 {
         #vis struct #view { #(#view_fields),* }
 
         #(#cfgs)*
-        unsafe impl #krate::HasSpan<{ #ident::#span_name_ident }> for #ident {
+        unsafe impl #krate::HasSpan<#span_id_hash_lit> for #ident {
             const SPAN: #krate::Span = #krate::Span {
                 id: #id,
                 first: #first,
@@ -657,7 +671,7 @@ fn expand_span(out_def: &OutDef, id: usize, s: &SpanDef) -> TokenStream2 {
         }
 
         #(#cfgs)*
-        unsafe impl #krate::HasView<{ #ident::#span_name_ident }> for #ident {
+        unsafe impl #krate::HasView<#span_id_hash_lit> for #ident {
             type View = #view;
         }
 
