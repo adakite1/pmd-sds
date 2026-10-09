@@ -363,7 +363,7 @@ fn span_id_hash(struct_name: &str, span: &Ident) -> u128 {
 }
 
 fn span_id_hash_lit(struct_name: &str, span: &Ident) -> LitInt {
-    LitInt::new(&format!("{:#x}", span_id_hash(struct_name, span)), span.span())
+    LitInt::new(&format!("{:#x}u128", span_id_hash(struct_name, span)), span.span())
 }
 
 fn type_text(ty: &syn::Type) -> String {
