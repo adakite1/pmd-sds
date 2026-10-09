@@ -13,8 +13,8 @@ impl<const N: usize> PartialEq for Padding<N> {
 impl<const N: usize> Eq for Padding<N> {}
 
 impl<const N: usize> PartialOrd for Padding<N> {
-    fn partial_cmp(&self, _: &Self) -> Option<Ordering> {
-        Some(Ordering::Equal)
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 
