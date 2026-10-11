@@ -1,11 +1,37 @@
-use raw_traversal::raw_field;
+use many_spans::{imply, many_spans};
+use raw_traversal::{ElemPtrs, raw_field};
 
-use crate::{Global, asm::{OS_CpuDisableIrq_ASM, OS_CpuRestoreIrq_ASM}, consts::{DMA_CHANNELS_COUNT, HW_MAIN_MEM_DEBUGGER_OFFSET, IRQ_FUTEX_BITS, OS_ARENA_DTCM, OS_ARENA_ITCM, OS_ARENA_MAIN, OS_ARENA_MAINEX, OS_ARENA_SYS_AREA_SHARED, OS_ARENA_WRAM_SHARED_ARM9, OS_CONSOLE_DEV_CARD, OS_CONSOLE_NITRO, OS_CONSOLE_SIZE_4MB, OS_CONSOLE_SIZE_MASK, OSi_CONSOLE_NOT_DETECT, OSi_IRQ_CALLBACK_MAX, REG_IE_ARM9_IRQ_SOURCES_MAX, REG_IE_DMA_0_FINISHED_SHIFT, REG_IE_DMA_3_FINISHED_SHIFT, REG_IE_TIMER_0_OVFLOW_SHIFT, REG_IE_TIMER_3_OVFLOW_SHIFT, TIMERS_COUNT}, cp15_size_encoding, linker_addr, read, reg::{REG_IE, REG_IF, REG_IME}, set_cp15_region, sys::{HW_CARD_ROM_HEADER_SIZE, HW_DOWNLOAD_PARAMETER_SIZE, OSSystemWork, SYS_AREA_START, SYS_AREA_SYSTEM_WORK, red::hw_red_reserved}, write};
+use crate::{Global, asm::{OS_CpuDisableIrq_ASM, OS_CpuRestoreIrq_ASM}, consts::{arm7::{OSi_IRQ_CALLBACK_MAX_ARM7, REG_IE_IRQ_SOURCES_MAX_ARM7}, arm9::{OSi_IRQ_CALLBACK_MAX_ARM9, REG_IE_IRQ_SOURCES_MAX_ARM9}, DMA_CHANNELS_COUNT, HW_MAIN_MEM_DEBUGGER_OFFSET, IRQ_FUTEX_BITS, OS_ARENA_DTCM, OS_ARENA_ITCM, OS_ARENA_MAIN, OS_ARENA_MAINEX, OS_ARENA_SYS_AREA_SHARED, OS_ARENA_WRAM_SHARED_ARM9, OS_CONSOLE_DEV_CARD, OS_CONSOLE_NITRO, OS_CONSOLE_SIZE_4MB, OS_CONSOLE_SIZE_MASK, OSi_CONSOLE_NOT_DETECT, OSi_IRQ_CALLBACK_MAX, REG_IE_DMA_0_FINISHED_SHIFT, REG_IE_DMA_3_FINISHED_SHIFT, REG_IE_IRQ_SOURCES_MAX, REG_IE_TIMER_0_OVFLOW_SHIFT, REG_IE_TIMER_3_OVFLOW_SHIFT, TIMERS_COUNT}, cp15_size_encoding, linker_addr, read, reg::{REG_IE, REG_IF, REG_IME}, set_cp15_region, sys::{HW_CARD_ROM_HEADER_SIZE, HW_DOWNLOAD_PARAMETER_SIZE, OSSystemWork, SYS_AREA_START, SYS_AREA_SYSTEM_WORK, red::hw_red_reserved}, write};
 
 #[repr(C)]
 pub struct OSThreadQueue {
     pub head: *mut core::ffi::c_void,
     pub tail: *mut core::ffi::c_void,
+}
+
+many_spans! {
+    #[repr(C)]
+    pub struct IRQTable_ {
+        +Arm7*
+        +Arm9*
+            pub handlers: [Option<extern "C" fn()>; REG_IE_IRQ_SOURCES_MAX_ARM9],
+        Arm9
+        +LidSpiWireless
+            pub lid_spi_wireless_handlers: [Option<extern "C" fn()>; REG_IE_IRQ_SOURCES_MAX_ARM7 - REG_IE_IRQ_SOURCES_MAX_ARM9],
+        LidSpiWireless
+        Arm7
+    }
+}
+#[cfg(armv4t)]
+pub type IRQTable = IRQTable_!(Arm7);
+#[cfg(armv5te)]
+pub type IRQTable = IRQTable_!(Arm9);
+//
+/// Defined length [`ElemPtrs`] handle
+#[inline(always)]
+pub fn irq_table_handlers(table: *mut IRQTable) -> ElemPtrs<*mut Option<extern "C" fn()>> {
+    let len = raw_field!(table, handlers[..]).len() + imply!(table: *mut IRQTable => IRQTable_::LidSpiWireless { raw_field!(table, lid_spi_wireless_handlers[..]).len() } 0);
+    raw_field!(table.cast::<Option<extern "C" fn()>>(), [..len])
 }
 
 #[repr(C)]
@@ -15,19 +41,34 @@ pub struct OSDynamicIrqCallbackInfo {
     pub arg: *mut core::ffi::c_void,
 }
 
-/// Different view of the same data as [`OSDynamicIrqCallbackInfoTable`]
-#[repr(C)]
-pub struct OSDynamicIrqCallbackInfoList {
-    pub callbacks: [OSDynamicIrqCallbackInfo; DMA_CHANNELS_COUNT + TIMERS_COUNT],
+many_spans! {
+    #[repr(C)]
+    pub struct OSDynamicIrqCallbackInfoTable_ {
+        +Arm7*
+        +Arm9*
+            pub dma_callbacks: [OSDynamicIrqCallbackInfo; DMA_CHANNELS_COUNT],
+            pub timer_callbacks: [OSDynamicIrqCallbackInfo; TIMERS_COUNT],
+        Arm9
+        +VBlank
+            pub vblank_callbacks: [OSDynamicIrqCallbackInfo; 1],
+        VBlank
+        Arm7
+    }
 }
-const _: () = assert!(core::mem::size_of::<OSDynamicIrqCallbackInfoList>() / core::mem::size_of::<OSDynamicIrqCallbackInfo>() == OSi_IRQ_CALLBACK_MAX);
-
-#[repr(C)]
-pub struct OSDynamicIrqCallbackInfoTable {
-    pub dma_callbacks: [OSDynamicIrqCallbackInfo; DMA_CHANNELS_COUNT],
-    pub timer_callbacks: [OSDynamicIrqCallbackInfo; TIMERS_COUNT],
+#[cfg(armv4t)]
+pub type OSDynamicIrqCallbackInfoTable = OSDynamicIrqCallbackInfoTable_!(Arm7);
+#[cfg(armv5te)]
+pub type OSDynamicIrqCallbackInfoTable = OSDynamicIrqCallbackInfoTable_!(Arm9);
+//
+/// Defined length [`ElemPtrs`] handle
+#[inline(always)]
+pub fn dynamic_irq_callback_infos(table: *mut OSDynamicIrqCallbackInfoTable) -> ElemPtrs<*mut OSDynamicIrqCallbackInfo> {
+    let len = raw_field!(table, dma_callbacks[..]).len() + raw_field!(table, timer_callbacks[..]).len() + imply!(table: *mut OSDynamicIrqCallbackInfoTable => OSDynamicIrqCallbackInfoTable_::VBlank { raw_field!(table, vblank_callbacks[..]).len() } 0);
+    raw_field!(table.cast::<OSDynamicIrqCallbackInfo>(), [..len])
 }
-const _: () = assert!(core::mem::size_of::<OSDynamicIrqCallbackInfoTable>() / core::mem::size_of::<OSDynamicIrqCallbackInfo>() == OSi_IRQ_CALLBACK_MAX);
+/// Static asserts
+const _: () = assert!(core::mem::size_of::<OSDynamicIrqCallbackInfoTable_!(Arm7)>() / core::mem::size_of::<OSDynamicIrqCallbackInfo>() == OSi_IRQ_CALLBACK_MAX_ARM7);
+const _: () = assert!(core::mem::size_of::<OSDynamicIrqCallbackInfoTable_!(Arm9)>() / core::mem::size_of::<OSDynamicIrqCallbackInfo>() == OSi_IRQ_CALLBACK_MAX_ARM9);
 
 /*(asm-corpus-filename: arm7/wram/sub_037FB638, objdump-symbol-name: arm7_bin/OS_IrqDummy)DONE('os_irqTable')*/
 /*(asm-corpus-filename: OS_IrqDummy, objdump-symbol-name: arm9_bin/OS_IrqDummy)DONE('os_irqTable')*/
