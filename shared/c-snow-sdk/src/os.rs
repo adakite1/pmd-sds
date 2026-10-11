@@ -1,7 +1,7 @@
 use many_spans::{imply, many_spans};
 use raw_traversal::{ElemPtrs, raw_field};
 
-use crate::{Global, asm::{OS_CpuDisableIrq_ASM, OS_CpuRestoreIrq_ASM}, consts::{arm7::{OSi_IRQ_CALLBACK_MAX_ARM7, REG_IE_IRQ_SOURCES_MAX_ARM7}, arm9::{OSi_IRQ_CALLBACK_MAX_ARM9, REG_IE_IRQ_SOURCES_MAX_ARM9}, DMA_CHANNELS_COUNT, HW_MAIN_MEM_DEBUGGER_OFFSET, IRQ_FUTEX_BITS, OS_ARENA_DTCM, OS_ARENA_ITCM, OS_ARENA_MAIN, OS_ARENA_MAINEX, OS_ARENA_SYS_AREA_SHARED, OS_ARENA_WRAM_SHARED_ARM9, OS_CONSOLE_DEV_CARD, OS_CONSOLE_NITRO, OS_CONSOLE_SIZE_4MB, OS_CONSOLE_SIZE_MASK, OSi_CONSOLE_NOT_DETECT, OSi_IRQ_CALLBACK_MAX, REG_IE_DMA_0_FINISHED_SHIFT, REG_IE_DMA_3_FINISHED_SHIFT, REG_IE_IRQ_SOURCES_MAX, REG_IE_TIMER_0_OVFLOW_SHIFT, REG_IE_TIMER_3_OVFLOW_SHIFT, TIMERS_COUNT}, cp15_size_encoding, linker_addr, read, reg::{REG_IE, REG_IF, REG_IME}, set_cp15_region, sys::{HW_CARD_ROM_HEADER_SIZE, HW_DOWNLOAD_PARAMETER_SIZE, OSSystemWork, SYS_AREA_START, SYS_AREA_SYSTEM_WORK, red::hw_red_reserved}, write};
+use crate::{Global, asm::{OS_CpuDisableIrq_ASM, OS_CpuRestoreIrq_ASM}, consts::{arm7::{OSi_IRQ_CALLBACK_MAX_ARM7, REG_IE_IRQ_SOURCES_MAX_ARM7}, arm9::{OSi_IRQ_CALLBACK_MAX_ARM9, REG_IE_IRQ_SOURCES_MAX_ARM9}, DMA_CHANNELS_COUNT, HW_MAIN_MEM_DEBUGGER_OFFSET, IRQ_FUTEX_BITS, OS_ARENA_DTCM, OS_ARENA_ITCM, OS_ARENA_MAIN, OS_ARENA_MAINEX, OS_ARENA_SYS_AREA_SHARED, OS_ARENA_WRAM_SHARED_ARM9, OS_CONSOLE_DEV_CARD, OS_CONSOLE_NITRO, OS_CONSOLE_SIZE_4MB, OS_CONSOLE_SIZE_MASK, OSi_CONSOLE_NOT_DETECT, REG_IE_DMA_0_FINISHED_SHIFT, REG_IE_DMA_3_FINISHED_SHIFT, REG_IE_IRQ_SOURCES_MAX, REG_IE_TIMER_0_OVFLOW_SHIFT, REG_IE_TIMER_3_OVFLOW_SHIFT, TIMERS_COUNT}, cp15_size_encoding, linker_addr, read, reg::{REG_IE, REG_IF, REG_IME}, set_cp15_region, sys::{HW_CARD_ROM_HEADER_SIZE, HW_DOWNLOAD_PARAMETER_SIZE, OSSystemWork, SYS_AREA_START, SYS_AREA_SYSTEM_WORK, red::hw_red_reserved}, write};
 
 #[repr(C)]
 pub struct OSThreadQueue {
@@ -69,6 +69,37 @@ pub fn dynamic_irq_callback_infos(table: *mut OSDynamicIrqCallbackInfoTable) -> 
 /// Static asserts
 const _: () = assert!(core::mem::size_of::<OSDynamicIrqCallbackInfoTable_!(Arm7)>() / core::mem::size_of::<OSDynamicIrqCallbackInfo>() == OSi_IRQ_CALLBACK_MAX_ARM7);
 const _: () = assert!(core::mem::size_of::<OSDynamicIrqCallbackInfoTable_!(Arm9)>() / core::mem::size_of::<OSDynamicIrqCallbackInfo>() == OSi_IRQ_CALLBACK_MAX_ARM9);
+
+many_spans! {
+    #[repr(C)]
+    pub struct DynamicCallbackIrqs_ {
+        +DmaTimerVBlank*
+        +DmaTimer*
+            pub dma_callbacks_irqs: [u16; DMA_CHANNELS_COUNT],
+            pub timer_callbacks_irqs: [u16; TIMERS_COUNT],
+        DmaTimer
+        +VBlank
+            pub vblank_callbacks_irqs: [u16; 1],
+        VBlank
+        DmaTimerVBlank
+    }
+}
+#[cfg(armv4t)]
+pub type DynamicCallbackIrqs = DynamicCallbackIrqs_!(DmaTimerVBlank);
+#[cfg(armv5te)]
+pub type DynamicCallbackIrqs = DynamicCallbackIrqs_!(DmaTimer);
+//
+/// Defined length [`ElemPtrs`] handle
+#[inline(always)]
+pub fn dynamic_callback_irq_lut(table: *const DynamicCallbackIrqs) -> ElemPtrs<*const u16> {
+    let len = raw_field!(table, dma_callbacks_irqs[..]).len() + raw_field!(table, timer_callbacks_irqs[..]).len() + imply!(table: *const DynamicCallbackIrqs => DynamicCallbackIrqs_::VBlank { raw_field!(table, vblank_callbacks_irqs[..]).len() } 0);
+    raw_field!(table.cast::<u16>(), [..len])
+}
+/// Static asserts
+const _: () = assert!(core::mem::size_of::<DynamicCallbackIrqs_!(DmaTimerVBlank)>() / core::mem::size_of::<u16>() == core::mem::size_of::<OSDynamicIrqCallbackInfoTable_!(Arm7)>() / core::mem::size_of::<OSDynamicIrqCallbackInfo>());
+const _: () = assert!(core::mem::size_of::<DynamicCallbackIrqs_!(DmaTimer)>() / core::mem::size_of::<u16>() == core::mem::size_of::<OSDynamicIrqCallbackInfoTable_!(Arm9)>() / core::mem::size_of::<OSDynamicIrqCallbackInfo>());
+const _: () = assert!(core::mem::size_of::<DynamicCallbackIrqs_!(DmaTimerVBlank)>() / core::mem::size_of::<u16>() == OSi_IRQ_CALLBACK_MAX_ARM7);
+const _: () = assert!(core::mem::size_of::<DynamicCallbackIrqs_!(DmaTimer)>() / core::mem::size_of::<u16>() == OSi_IRQ_CALLBACK_MAX_ARM9);
 
 /*(asm-corpus-filename: arm7/wram/sub_037FB638, objdump-symbol-name: arm7_bin/OS_IrqDummy)DONE('os_irqTable')*/
 /*(asm-corpus-filename: OS_IrqDummy, objdump-symbol-name: arm9_bin/OS_IrqDummy)DONE('os_irqTable')*/
