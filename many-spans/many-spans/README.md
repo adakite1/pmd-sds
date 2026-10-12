@@ -71,34 +71,31 @@ fn sum<I: In<S = Example>>(p: *const I) -> u32 {
 }
 ```
 
-Just to be *EXTRA* clear about why this is good, here is a fake example:
+Just to be *EXTRA* clear about why this is good, here is an example:
 
 ```rust
-/// FAKE CODE, THIS IS JUST TO SHOW YOU WHAT IT WOULD LOOK LIKE WITHOUT AND DOES NOT CORRESPOND TO HARDWARE:
-
-/// FAKE STRUCTS
-#[repr(C)] pub struct Arm7Table { pub dma: [Cb; 4], pub timers: [Cb; 4] }
-#[repr(C)] pub struct Arm9Table { pub timers: [Cb; 4], pub vcount: [Cb; 1] }
+#[repr(C)] pub struct Arm7Table { pub hardware_1: [Cb; 4], pub hardware_2: [Cb; 4] }
+#[repr(C)] pub struct Arm9Table { pub hardware_2: [Cb; 4], pub hardware_3: [Cb; 1] }
 
 #[cfg(feature = "arm7")]
-static mut TABLE: Arm7Table = Arm7Table { dma: [EMPTY; 4], timers: [EMPTY; 4] };
+static mut TABLE: Arm7Table = Arm7Table { hardware_1: [EMPTY; 4], hardware_2: [EMPTY; 4] };
 #[cfg(feature = "arm9")]
-static mut TABLE: Arm9Table = Arm9Table { timers: [EMPTY; 4], vcount: [EMPTY; 1] };
+static mut TABLE: Arm9Table = Arm9Table { hardware_2: [EMPTY; 4], hardware_3: [EMPTY; 1] };
 
 #[inline(always)]
-fn enable_impl<const HAS_DMA: bool, const HAS_VCOUNT: bool>( // <== BAD, you have to keep track of which booleans mean what and there is absolutely no type tracking. If you forget to do an if const somewhere, the asm looks fine on one cfg, and then on the other you have a bad access.
-    timers: *mut [Cb; 4], // <== BAD, these could be null and you wouldn't know it at all from just looking at this
-    dma: *mut [Cb; 4],
-    vcount: *mut [Cb; 1],
+fn enable_impl<const HAS_HARDWARE_1: bool, const HAS_HARDWARE_3: bool>( // <== BAD, you have to keep track of which booleans mean what and there is absolutely no type tracking. If you forget to do an if const somewhere, the asm looks fine on one cfg, and then on the other you have a bad access.
+    hardware_2: *mut [Cb; 4], // <== BAD, these could be null and you wouldn't know it at all from just looking at this
+    hardware_1: *mut [Cb; 4],
+    hardware_3: *mut [Cb; 1],
 ) {
     unsafe {
-        (*timers)[0].enable = 1;
+        (*hardware_2)[0].enable = 1;
 
-        if const { HAS_DMA } {
-            (*dma)[0].enable = 1;
+        if const { HAS_HARDWARE_1 } {
+            (*hardware_1)[0].enable = 1;
         }
-        if const { HAS_VCOUNT } {
-            (*vcount)[0].enable = 1;
+        if const { HAS_HARDWARE_3 } {
+            (*hardware_3)[0].enable = 1;
         }
     }
 }
@@ -108,8 +105,8 @@ pub fn enable() {
     let t = &raw mut TABLE;
     unsafe {
         enable_impl::<true, false>( // <== BAD, what does "<true, false>" even mean??!?
-            &raw mut (*t).timers,
-            &raw mut (*t).dma,
+            &raw mut (*t).hardware_2,
+            &raw mut (*t).hardware_1,
             core::ptr::dangling_mut(),
         );
     }
@@ -120,9 +117,9 @@ pub fn enable() {
     let t = &raw mut TABLE;
     unsafe {
         enable_impl::<false, true>(
-            &raw mut (*t).timers,
-            core::ptr::dangling_mut(), // <== BAD, I hope you remember the order was timers, dma, then vcount, and the dangling_mut is standing in for the dma
-            &raw mut (*t).vcount,
+            &raw mut (*t).hardware_2,
+            core::ptr::dangling_mut(), // <== BAD, I hope you remember the order was hardware_2, hardware_1, then hardware_3, and the dangling_mut is standing in for the hardware_1
+            &raw mut (*t).hardware_3,
         );
     }
 }
@@ -139,13 +136,13 @@ many_spans! {
     #[repr(C)]
     pub struct Table_ {
         +Arm7*
-            pub dma: [Cb; 4],
+            pub hardware_1: [Cb; 4],
         +Arm9*
-        +Timers
-            pub timers: [Cb; 4],
-        Timers
+        +Hardware2
+            pub hardware_2: [Cb; 4],
+        Hardware2
         Arm7
-            pub vcount: [Cb; 1],
+            pub hardware_3: [Cb; 1],
         Arm9
     }
 }
@@ -156,21 +153,21 @@ type Table = Table_!(Arm7);
 type Table = Table_!(Arm9);
 
 #[cfg(feature = "arm7")]
-static mut TABLE: Table = Table { dma: [EMPTY; 4], timers: [EMPTY; 4] };
+static mut TABLE: Table = Table { hardware_1: [EMPTY; 4], hardware_2: [EMPTY; 4] };
 #[cfg(feature = "arm9")]
-static mut TABLE: Table = Table { timers: [EMPTY; 4], vcount: [EMPTY; 1] };
+static mut TABLE: Table = Table { hardware_2: [EMPTY; 4], hardware_3: [EMPTY; 1] };
 
 pub fn enable() {
     let t = &raw mut TABLE;
 
     unsafe {
-        (*t).timers[0].enable = 1;
+        (*t).hardware_2[0].enable = 1;
 
         imply!(t: *mut Table => Table_::Arm7 {
-            (*t).dma[0].enable = 1;
+            (*t).hardware_1[0].enable = 1;
         });
         imply!(t: *mut Table => Table_::Arm9 {
-            (*t).vcount[0].enable = 1;
+            (*t).hardware_3[0].enable = 1;
         });
     }
 }
