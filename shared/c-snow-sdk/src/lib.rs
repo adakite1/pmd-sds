@@ -53,7 +53,9 @@ pub extern "C" fn HardwareInterrupt() -> ! {
 #[unsafe(link_section = ".text.origaddr.02000C6C")]
 #[unsafe(no_mangle)]
 pub extern "C" fn SnowMain() -> ! {
-    core::hint::black_box(1+1);
+    use crate::os::OS_Init;
+
+    OS_Init();
     panic!();
 }
 
