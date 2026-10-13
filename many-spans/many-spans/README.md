@@ -74,13 +74,13 @@ fn sum<I: In<S = Example>>(p: *const I) -> u32 {
 Just to be *EXTRA* clear about why this is good, here is an example:
 
 ```rust
-#[repr(C)] pub struct Arm7Table { pub hardware_1: [Cb; 4], pub hardware_2: [Cb; 4] }
-#[repr(C)] pub struct Arm9Table { pub hardware_2: [Cb; 4], pub hardware_3: [Cb; 1] }
+#[repr(C)] pub struct Processor1Table { pub hardware_1: [Cb; 4], pub hardware_2: [Cb; 4] }
+#[repr(C)] pub struct Processor2Table { pub hardware_2: [Cb; 4], pub hardware_3: [Cb; 1] }
 
-#[cfg(feature = "arm7")]
-static mut TABLE: Arm7Table = Arm7Table { hardware_1: [EMPTY; 4], hardware_2: [EMPTY; 4] };
-#[cfg(feature = "arm9")]
-static mut TABLE: Arm9Table = Arm9Table { hardware_2: [EMPTY; 4], hardware_3: [EMPTY; 1] };
+#[cfg(feature = "processor1")]
+static mut TABLE: Processor1Table = Processor1Table { hardware_1: [EMPTY; 4], hardware_2: [EMPTY; 4] };
+#[cfg(feature = "processor2")]
+static mut TABLE: Processor2Table = Processor2Table { hardware_2: [EMPTY; 4], hardware_3: [EMPTY; 1] };
 
 #[inline(always)]
 fn enable_impl<const HAS_HARDWARE_1: bool, const HAS_HARDWARE_3: bool>( // <== BAD, you have to keep track of which booleans mean what and there is absolutely no type tracking. If you forget to do an if const somewhere, the asm looks fine on one cfg, and then on the other you have a bad access.
@@ -100,7 +100,7 @@ fn enable_impl<const HAS_HARDWARE_1: bool, const HAS_HARDWARE_3: bool>( // <== B
     }
 }
 
-#[cfg(feature = "arm7")]
+#[cfg(feature = "processor1")]
 pub fn enable() {
     let t = &raw mut TABLE;
     unsafe {
@@ -112,7 +112,7 @@ pub fn enable() {
     }
 }
 
-#[cfg(feature = "arm9")] // <== BAD, the entire block is greyed out until you decide to switch cfg's, and then when you switch, check, fix, and come back, the other block is erroring now
+#[cfg(feature = "processor2")] // <== BAD, the entire block is greyed out until you decide to switch cfg's, and then when you switch, check, fix, and come back, the other block is erroring now
 pub fn enable() {
     let t = &raw mut TABLE;
     unsafe {
@@ -135,26 +135,26 @@ use many_spans::{imply, many_spans};
 many_spans! {
     #[repr(C)]
     pub struct Table_ {
-        +Arm7*
+        +P1*
             pub hardware_1: [Cb; 4],
-        +Arm9*
+        +P2*
         +Hardware2
             pub hardware_2: [Cb; 4],
         Hardware2
-        Arm7
+        P1
             pub hardware_3: [Cb; 1],
-        Arm9
+        P2
     }
 }
 
-#[cfg(feature = "arm7")]
-type Table = Table_!(Arm7);
-#[cfg(feature = "arm9")]
-type Table = Table_!(Arm9);
+#[cfg(feature = "processor1")]
+type Table = Table_!(P1);
+#[cfg(feature = "processor2")]
+type Table = Table_!(P2);
 
-#[cfg(feature = "arm7")]
+#[cfg(feature = "processor1")]
 static mut TABLE: Table = Table { hardware_1: [EMPTY; 4], hardware_2: [EMPTY; 4] };
-#[cfg(feature = "arm9")]
+#[cfg(feature = "processor2")]
 static mut TABLE: Table = Table { hardware_2: [EMPTY; 4], hardware_3: [EMPTY; 1] };
 
 pub fn enable() {
@@ -163,10 +163,10 @@ pub fn enable() {
     unsafe {
         (*t).hardware_2[0].enable = 1;
 
-        imply!(t: *mut Table => Table_::Arm7 {
+        imply!(t: *mut Table => Table_::P1 {
             (*t).hardware_1[0].enable = 1;
         });
-        imply!(t: *mut Table => Table_::Arm9 {
+        imply!(t: *mut Table => Table_::P2 {
             (*t).hardware_3[0].enable = 1;
         });
     }
