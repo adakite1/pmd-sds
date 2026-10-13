@@ -4,7 +4,7 @@ The criteria for when an assembly function is considered done are necessarily di
 
 There has been substantial work done already, including finishing crt0. Read on for the purpose and several choices made.
 
-<Discord Badge> (This is as yet an unannounced personal project of mine, so you would be one of the early people to have found this. Congrats! Before you join, please read [CONTRIBUTING.md](./CONTRIBUTING.md) carefully, as culture is very important for us.)
+(This is as yet an unannounced personal project of mine, so you would be one of the early people to have found this. Congrats! Before you join, please read [CONTRIBUTING.md](./CONTRIBUTING.md) carefully, as culture is very important for us.) [![Join our Discord](https://img.shields.io/badge/Discord-5865F2?logo=discord&logoColor=white)](https://discord.gg/JzkcMJ9nmR)
 
 ### Purpose
 
