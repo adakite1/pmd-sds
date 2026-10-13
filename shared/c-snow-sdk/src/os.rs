@@ -111,6 +111,94 @@ pub extern "C" fn OS_IrqDummy() {
     
 }
 
+/*(asm-corpus-filename: arm7/wram/AudioInterrupt, objdump-symbol-name: arm7_bin/OSi_DynamicIrqCallback)DONE('os_irqTable')*/
+/*(asm-corpus-filename: OSi_IrqCallback, objdump-symbol-name: arm9_bin/OSi_DynamicIrqCallback)DONE('os_irqTable', us, eu, jp)*/
+#[inline(never)]
+#[cfg_attr(armv4t, unsafe(link_section = ".text.wram.origaddr.037FB63C"))]
+#[cfg_attr(armv5te, unsafe(link_section = ".text.origaddr.02078978"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn OSi_DynamicIrqCallback(index: u32) {
+    let info = dynamic_irq_callback_infos(OSi_DynamicIrqCallbackInfo.as_ptr()).index(index as usize);
+    let func = raw_field!(info, final mut func).get();
+    raw_field!(info, final mut func).set(None);
+    let mask: u32 = 1 << raw_field!(dynamic_callback_irq_lut(&raw const DYNAMIC_CALLBACK_INDEX_TO_BOUND_IRQ_INDEX), final).index(index as usize).get();
+    if let Some(func) = func {
+        func(raw_field!(info, final arg).get());
+    }
+    write(IRQ_FUTEX_BITS as *mut u32, read(IRQ_FUTEX_BITS as *const u32) | mask);
+    if raw_field!(info, final enable).get() == 0 {
+        OS_DisableIrqSources(mask);
+    }
+}
+
+/*(asm-corpus-filename: [arm7/wram/sub_037FB6C8, arm7/wram/sub_037FB6D8, arm7/wram/sub_037FB6E8, arm7/wram/sub_037FB6F8], objdump-symbol-name: [arm7_bin/OSi_IrqDma0, arm7_bin/OSi_IrqDma1, arm7_bin/OSi_IrqDma2, arm7_bin/OSi_IrqDma3])DONE('os_irqTable')*/
+/*(asm-corpus-filename: [OSi_IrqDma0, OSi_IrqDma1, OSi_IrqDma2, OSi_IrqDma3], objdump-symbol-name: [arm9_bin/OSi_IrqDma0, arm9_bin/OSi_IrqDma1, arm9_bin/OSi_IrqDma2, arm9_bin/OSi_IrqDma3])DONE('os_irqTable', us, eu, jp)*/
+#[inline(never)]
+#[cfg_attr(armv4t, unsafe(link_section = ".text.wram.origaddr.037FB6C8"))]
+#[cfg_attr(armv5te, unsafe(link_section = ".text.origaddr.02078A00"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn OSi_IrqDma0() {
+    OSi_DynamicIrqCallback(0);
+}
+
+#[inline(never)]
+#[cfg_attr(armv4t, unsafe(link_section = ".text.wram.origaddr.037FB6D8"))]
+#[cfg_attr(armv5te, unsafe(link_section = ".text.origaddr.02078A10"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn OSi_IrqDma1() {
+    OSi_DynamicIrqCallback(1);
+}
+
+#[inline(never)]
+#[cfg_attr(armv4t, unsafe(link_section = ".text.wram.origaddr.037FB6E8"))]
+#[cfg_attr(armv5te, unsafe(link_section = ".text.origaddr.02078A20"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn OSi_IrqDma2() {
+    OSi_DynamicIrqCallback(2);
+}
+
+#[inline(never)]
+#[cfg_attr(armv4t, unsafe(link_section = ".text.wram.origaddr.037FB6F8"))]
+#[cfg_attr(armv5te, unsafe(link_section = ".text.origaddr.02078A30"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn OSi_IrqDma3() {
+    OSi_DynamicIrqCallback(3);
+}
+
+/*(asm-corpus-filename: [arm7/wram/sub_037FB708, arm7/wram/sub_037FB718, arm7/wram/sub_037FB728, arm7/wram/sub_037FB738], objdump-symbol-name: [arm7_bin/OSi_IrqTimer0, arm7_bin/OSi_IrqTimer1, arm7_bin/OSi_IrqTimer2, arm7_bin/OSi_IrqTimer3])DONE('os_irqTable')*/
+/*(asm-corpus-filename: [OSi_IrqTimer0, OSi_IrqTimer1, OSi_IrqTimer2, OSi_IrqTimer3], objdump-symbol-name: [arm9_bin/OSi_IrqTimer0, arm9_bin/OSi_IrqTimer1, arm9_bin/OSi_IrqTimer2, arm9_bin/OSi_IrqTimer3])DONE('os_irqTable', us, eu, jp)*/
+#[inline(never)]
+#[cfg_attr(armv4t, unsafe(link_section = ".text.wram.origaddr.037FB708"))]
+#[cfg_attr(armv5te, unsafe(link_section = ".text.origaddr.02078A40"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn OSi_IrqTimer0() {
+    OSi_DynamicIrqCallback(DMA_CHANNELS_COUNT as u32);
+}
+
+#[inline(never)]
+#[cfg_attr(armv4t, unsafe(link_section = ".text.wram.origaddr.037FB718"))]
+#[cfg_attr(armv5te, unsafe(link_section = ".text.origaddr.02078A50"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn OSi_IrqTimer1() {
+    OSi_DynamicIrqCallback(DMA_CHANNELS_COUNT as u32 + 1);
+}
+
+#[inline(never)]
+#[cfg_attr(armv4t, unsafe(link_section = ".text.wram.origaddr.037FB728"))]
+#[cfg_attr(armv5te, unsafe(link_section = ".text.origaddr.02078A60"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn OSi_IrqTimer2() {
+    OSi_DynamicIrqCallback(DMA_CHANNELS_COUNT as u32 + 2);
+}
+
+#[inline(never)]
+#[cfg_attr(armv4t, unsafe(link_section = ".text.wram.origaddr.037FB738"))]
+#[cfg_attr(armv5te, unsafe(link_section = ".text.origaddr.02078A70"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn OSi_IrqTimer3() {
+    OSi_DynamicIrqCallback(DMA_CHANNELS_COUNT as u32 + 3);
+}
+
 /// How to read: in the sense of "overwrite the set IRQ sources", "set" in the adjective sense of something having been prepared and being ready.
 ///
 /// You overwrite which IRQ sources you are set and ready to start receiving requests from (and for which ones you are not).
@@ -254,82 +342,6 @@ armv5te => {
 
 use crate::{asm::OS_SpinWait_ASM, dtcm::{OS_IRQTable, OSi_IrqThreadQueue}};
 
-/*(asm-corpus-filename: OSi_IrqCallback, objdump-symbol-name: arm9_bin/OSi_DynamicIrqCallback)DONE('os_irqTable', us, eu, jp)*/
-#[inline(never)]
-#[unsafe(link_section = ".text.origaddr.02078978")]
-#[unsafe(no_mangle)]
-pub extern "C" fn OSi_DynamicIrqCallback(index: u32) {
-    let info = raw_field!(OSi_DynamicIrqCallbackInfo.as_ptr().cast::<OSDynamicIrqCallbackInfoList>(), mut callbacks[index as usize]);
-    let func = raw_field!(info, final mut func).get();
-    raw_field!(info, final mut func).set(None);
-    let mask: u32 = 1 << raw_field!(&raw const DYNAMIC_CALLBACK_INDEX_TO_BOUND_IRQ_INDEX, final [index as usize]).get();
-    if let Some(func) = func {
-        func(raw_field!(info, final arg).get());
-    }
-    write(IRQ_FUTEX_BITS as *mut u32, read(IRQ_FUTEX_BITS as *const u32) | mask);
-    if raw_field!(info, final enable).get() == 0 {
-        OS_DisableIrqSources(mask);
-    }
-}
-
-/*(asm-corpus-filename: [OSi_IrqDma0, OSi_IrqDma1, OSi_IrqDma2, OSi_IrqDma3], objdump-symbol-name: [arm9_bin/OSi_IrqDma0, arm9_bin/OSi_IrqDma1, arm9_bin/OSi_IrqDma2, arm9_bin/OSi_IrqDma3])DONE('os_irqTable', us, eu, jp)*/
-#[inline(never)]
-#[unsafe(link_section = ".text.origaddr.02078A00")]
-#[unsafe(no_mangle)]
-pub extern "C" fn OSi_IrqDma0() {
-    OSi_DynamicIrqCallback(0);
-}
-
-#[inline(never)]
-#[unsafe(link_section = ".text.origaddr.02078A10")]
-#[unsafe(no_mangle)]
-pub extern "C" fn OSi_IrqDma1() {
-    OSi_DynamicIrqCallback(1);
-}
-
-#[inline(never)]
-#[unsafe(link_section = ".text.origaddr.02078A20")]
-#[unsafe(no_mangle)]
-pub extern "C" fn OSi_IrqDma2() {
-    OSi_DynamicIrqCallback(2);
-}
-
-#[inline(never)]
-#[unsafe(link_section = ".text.origaddr.02078A30")]
-#[unsafe(no_mangle)]
-pub extern "C" fn OSi_IrqDma3() {
-    OSi_DynamicIrqCallback(3);
-}
-
-/*(asm-corpus-filename: [OSi_IrqTimer0, OSi_IrqTimer1, OSi_IrqTimer2, OSi_IrqTimer3], objdump-symbol-name: [arm9_bin/OSi_IrqTimer0, arm9_bin/OSi_IrqTimer1, arm9_bin/OSi_IrqTimer2, arm9_bin/OSi_IrqTimer3])DONE('os_irqTable', us, eu, jp)*/
-#[inline(never)]
-#[unsafe(link_section = ".text.origaddr.02078A40")]
-#[unsafe(no_mangle)]
-pub extern "C" fn OSi_IrqTimer0() {
-    OSi_DynamicIrqCallback(DMA_CHANNELS_COUNT as u32);
-}
-
-#[inline(never)]
-#[unsafe(link_section = ".text.origaddr.02078A50")]
-#[unsafe(no_mangle)]
-pub extern "C" fn OSi_IrqTimer1() {
-    OSi_DynamicIrqCallback(DMA_CHANNELS_COUNT as u32 + 1);
-}
-
-#[inline(never)]
-#[unsafe(link_section = ".text.origaddr.02078A60")]
-#[unsafe(no_mangle)]
-pub extern "C" fn OSi_IrqTimer2() {
-    OSi_DynamicIrqCallback(DMA_CHANNELS_COUNT as u32 + 2);
-}
-
-#[inline(never)]
-#[unsafe(link_section = ".text.origaddr.02078A70")]
-#[unsafe(no_mangle)]
-pub extern "C" fn OSi_IrqTimer3() {
-    OSi_DynamicIrqCallback(DMA_CHANNELS_COUNT as u32 + 3);
-}
-
 /*(asm-corpus-filename: OS_InitIrqTable, objdump-symbol-name: arm9_bin/OS_InitIrqThreadQueue)DONE('os_interrupt')*/
 #[inline(never)]
 #[unsafe(link_section = ".text.origaddr.02078A80")]
@@ -344,13 +356,14 @@ pub extern "C" fn OS_InitIrqThreadQueue() {
 #[unsafe(link_section = ".text.origaddr.02078A98")]
 #[unsafe(no_mangle)]
 pub extern "C" fn OS_SetIrqFunction(mut mask: u32, function: Option<extern "C" fn()>) {
-    for i in 0..REG_IE_ARM9_IRQ_SOURCES_MAX {
+    let handlers = raw_field!(irq_table_handlers(OS_IRQTable.as_ptr()), final);
+    for i in 0..REG_IE_IRQ_SOURCES_MAX {
         if mask & 1 != 0 {
             let info = match i {
                 REG_IE_DMA_0_FINISHED_SHIFT..=REG_IE_DMA_3_FINISHED_SHIFT => Some(raw_field!(OSi_DynamicIrqCallbackInfo.as_ptr(), mut dma_callbacks[i - REG_IE_DMA_0_FINISHED_SHIFT])),
                 REG_IE_TIMER_0_OVFLOW_SHIFT..=REG_IE_TIMER_3_OVFLOW_SHIFT => Some(raw_field!(OSi_DynamicIrqCallbackInfo.as_ptr(), mut timer_callbacks[i - REG_IE_TIMER_0_OVFLOW_SHIFT])),
                 _ => {
-                    raw_field!(OS_IRQTable.as_ptr(), final [i]).set(function);
+                    handlers.index(i).set(function);
                     None
                 },
             };
@@ -369,12 +382,13 @@ pub extern "C" fn OS_SetIrqFunction(mut mask: u32, function: Option<extern "C" f
 #[unsafe(link_section = ".text.origaddr.02078B20")]
 #[unsafe(no_mangle)]
 pub extern "C" fn OS_GetIrqFunction(mut mask: u32) -> Option<extern "C" fn()> {
-    for i in 0..REG_IE_ARM9_IRQ_SOURCES_MAX {
+    let handlers = raw_field!(irq_table_handlers(OS_IRQTable.as_ptr()), final);
+    for i in 0..REG_IE_IRQ_SOURCES_MAX {
         if mask & 1 != 0 {
             return match i {
                 REG_IE_DMA_0_FINISHED_SHIFT..=REG_IE_DMA_3_FINISHED_SHIFT => unsafe { core::mem::transmute::<Option<extern "C" fn(*mut core::ffi::c_void)>, Option<extern "C" fn()>>(raw_field!(OSi_DynamicIrqCallbackInfo.as_ptr(), dma_callbacks[i - REG_IE_DMA_0_FINISHED_SHIFT]~, final func).get()) },
                 REG_IE_TIMER_0_OVFLOW_SHIFT..=REG_IE_TIMER_3_OVFLOW_SHIFT => unsafe { core::mem::transmute::<Option<extern "C" fn(*mut core::ffi::c_void)>, Option<extern "C" fn()>>(raw_field!(OSi_DynamicIrqCallbackInfo.as_ptr(), timer_callbacks[i - REG_IE_TIMER_0_OVFLOW_SHIFT]~, final func).get()) },
-                _ => raw_field!(OS_IRQTable.as_ptr(), final [i]).get(),
+                _ => handlers.index(i).get(),
             };
         }
         mask >>= 1;
@@ -668,16 +682,20 @@ pub extern "C" fn OS_SpinWait(cycles: u32) {
 }
 
 #[unsafe(link_section = ".rodata.origaddr.020B2B9C")]
-pub static DYNAMIC_CALLBACK_INDEX_TO_BOUND_IRQ_INDEX: [u16; OSi_IRQ_CALLBACK_MAX] = [
-    REG_IE_DMA_0_FINISHED_SHIFT as u16,
-    REG_IE_DMA_0_FINISHED_SHIFT as u16 + 1,
-    REG_IE_DMA_0_FINISHED_SHIFT as u16 + 2,
-    REG_IE_DMA_0_FINISHED_SHIFT as u16 + 3,
-    REG_IE_TIMER_0_OVFLOW_SHIFT as u16,
-    REG_IE_TIMER_0_OVFLOW_SHIFT as u16 + 1,
-    REG_IE_TIMER_0_OVFLOW_SHIFT as u16 + 2,
-    REG_IE_TIMER_0_OVFLOW_SHIFT as u16 + 3,
-];
+pub static DYNAMIC_CALLBACK_INDEX_TO_BOUND_IRQ_INDEX: DynamicCallbackIrqs = DynamicCallbackIrqs {
+    dma_callbacks_irqs: [
+        REG_IE_DMA_0_FINISHED_SHIFT as u16,
+        REG_IE_DMA_0_FINISHED_SHIFT as u16 + 1,
+        REG_IE_DMA_0_FINISHED_SHIFT as u16 + 2,
+        REG_IE_DMA_0_FINISHED_SHIFT as u16 + 3,
+    ],
+    timer_callbacks_irqs: [
+        REG_IE_TIMER_0_OVFLOW_SHIFT as u16,
+        REG_IE_TIMER_0_OVFLOW_SHIFT as u16 + 1,
+        REG_IE_TIMER_0_OVFLOW_SHIFT as u16 + 2,
+        REG_IE_TIMER_0_OVFLOW_SHIFT as u16 + 3,
+    ],
+};
 
 #[unsafe(link_section = ".data.origaddr.020B2BAC")]
 pub static OSi_ConsoleTypeCache: Global<u32> = Global::new(OSi_CONSOLE_NOT_DETECT);
@@ -711,7 +729,14 @@ armv4t => {
 
 /* ====== ARM7 ====== */
 
-use crate::svc::SVC_WaitByLoop;
+use crate::{consts::REG_IE_VBLANK_SHIFT, svc::SVC_WaitByLoop};
+
+#[inline(never)]
+#[unsafe(link_section = ".text.wram.origaddr.037FB748")]
+#[unsafe(no_mangle)]
+pub extern "C" fn OSi_IrqVBlank() {
+    
+}
 
 /*(asm-corpus-filename: arm7/wram/sub_037FDD64, objdump-symbol-name: arm7_bin/OS_SpinWait)DONE('os_system')*/
 #[inline(never)]
@@ -720,6 +745,83 @@ use crate::svc::SVC_WaitByLoop;
 pub extern "C" fn OS_SpinWait(cycles: u32) {
     SVC_WaitByLoop(cycles as i32 / 4);
 }
+
+#[unsafe(link_section = ".rodata.wram.origaddr.038074E0")]
+pub static DYNAMIC_CALLBACK_INDEX_TO_BOUND_IRQ_INDEX: DynamicCallbackIrqs = DynamicCallbackIrqs {
+    dma_callbacks_irqs: [
+        REG_IE_DMA_0_FINISHED_SHIFT as u16,
+        REG_IE_DMA_0_FINISHED_SHIFT as u16 + 1,
+        REG_IE_DMA_0_FINISHED_SHIFT as u16 + 2,
+        REG_IE_DMA_0_FINISHED_SHIFT as u16 + 3,
+    ],
+    timer_callbacks_irqs: [
+        REG_IE_TIMER_0_OVFLOW_SHIFT as u16,
+        REG_IE_TIMER_0_OVFLOW_SHIFT as u16 + 1,
+        REG_IE_TIMER_0_OVFLOW_SHIFT as u16 + 2,
+        REG_IE_TIMER_0_OVFLOW_SHIFT as u16 + 3,
+    ],
+    vblank_callbacks_irqs: [
+        REG_IE_VBLANK_SHIFT as u16,
+    ],
+};
+
+#[unsafe(link_section = ".data.wram.origaddr.038074F4")]
+pub static OS_IRQTable: Global<IRQTable> = Global::new(IRQTable {
+    handlers: [
+        Some(OSi_IrqVBlank),
+        Some(OS_IrqDummy),
+        Some(OS_IrqDummy),
+        Some(OSi_IrqTimer0),
+        Some(OSi_IrqTimer1),
+        Some(OSi_IrqTimer2),
+        Some(OSi_IrqTimer3),
+        Some(OS_IrqDummy),
+        Some(OSi_IrqDma0),
+        Some(OSi_IrqDma1),
+        Some(OSi_IrqDma2),
+        Some(OSi_IrqDma3),
+        Some(OS_IrqDummy),
+        Some(OS_IrqDummy),
+        Some(OS_IrqDummy),
+        Some(OS_IrqDummy),
+        Some(OS_IrqDummy),
+        Some(OS_IrqDummy),
+        Some(OS_IrqDummy),
+        Some(OS_IrqDummy),
+        Some(OS_IrqDummy),
+        Some(OS_IrqDummy),
+    ],
+    lid_spi_wireless_handlers: [
+        Some(OS_IrqDummy),
+        Some(OS_IrqDummy),
+        Some(OS_IrqDummy),
+    ],
+});
+
+#[unsafe(link_section = ".bss.wram.origaddr.03807610")]
+pub static OSi_DynamicIrqCallbackInfo: Global<OSDynamicIrqCallbackInfoTable> = Global::new(OSDynamicIrqCallbackInfoTable {
+    dma_callbacks: [const {
+        OSDynamicIrqCallbackInfo {
+            func: None,
+            enable: 0,
+            arg: core::ptr::null_mut(),
+        }
+    }; DMA_CHANNELS_COUNT],
+    timer_callbacks: [const {
+        OSDynamicIrqCallbackInfo {
+            func: None,
+            enable: 0,
+            arg: core::ptr::null_mut(),
+        }
+    }; TIMERS_COUNT],
+    vblank_callbacks: [const {
+        OSDynamicIrqCallbackInfo {
+            func: None,
+            enable: 0,
+            arg: core::ptr::null_mut(),
+        }
+    }; 1],
+});
 
 /*cfg_select*/ } _
 => {} }
