@@ -2,7 +2,7 @@
 // Copyright (c) 2026 adakite1
 //
 // Licensed under either of Apache License, Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
-// or the MIT license (http://opensource.org) at your option.
+// or the MIT license (http://opensource.org/license/mit) at your option.
 
 #![cfg_attr(not(test), no_std)]
 #![feature(core_intrinsics)]
@@ -16,7 +16,7 @@ use core::{marker::PhantomData, ops::{Range, RangeFrom, RangeFull, RangeInclusiv
 /// and `strb`s. This did not happen at no optimizations, so looking at the MIR
 /// it's actually an interesting situation. The original MIR is:
 ///
-/// ```
+/// ```text
 /// _2 = &raw const ((*_1).1: u32);
 /// _0 = plain_read::<u32>(move _2);
 /// ```
@@ -24,7 +24,7 @@ use core::{marker::PhantomData, ops::{Range, RangeFrom, RangeFull, RangeInclusiv
 /// Inside `plain_read`, the LowerIntrinsics pass had already lowered `read_via_copy`
 /// to `_0 = copy (*src)`, so after the Inline pass we get:
 ///
-/// ```
+/// ```text
 /// _2 = &raw const ((*_1).1: u32);
 /// _0 = copy (*_2);          // *_2 : pointee u32 => align 4
 /// ```
@@ -33,7 +33,7 @@ use core::{marker::PhantomData, ops::{Range, RangeFrom, RangeFull, RangeInclusiv
 /// of `(*_1).1: u32` and then immediately dereferencing it, so it pastes that in
 /// as an optimization (`*&x` to `x`):
 ///
-/// ```
+/// ```text
 /// _0 = copy ((*_1).1: u32);  // deref of *const S => packed struct align 1
 /// ```
 ///
@@ -53,7 +53,7 @@ use core::{marker::PhantomData, ops::{Range, RangeFrom, RangeFull, RangeInclusiv
 ///
 /// This can be fixed with an aligned wrapper, since the newtype changes the MIR to:
 ///
-/// ```
+/// ```text
 /// _2 = &raw const ((*_1).1: u32);
 /// _3 = copy _2 as *const A4<u32> (PtrToPtr);
 /// _0 = copy ((*_3).0: u32);

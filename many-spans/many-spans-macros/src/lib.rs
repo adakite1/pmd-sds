@@ -2,7 +2,7 @@
 // Copyright (c) 2026 adakite1
 //
 // Licensed under either of Apache License, Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
-// or the MIT license (http://opensource.org) at your option.
+// or the MIT license (http://opensource.org/license/mit) at your option.
 
 use proc_macro::TokenStream;
 use proc_macro_crate::{FoundCrate, crate_name};

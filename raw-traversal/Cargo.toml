@@ -5,7 +5,6 @@ edition = "2024"
 description = "Raw pointer traversal (nightly-only crate)"
 # homepage = "https://github.com/adakite1/raw-traversal"
 # repository = "https://github.com/adakite1/raw-traversal"
-readme = "README.md"
 license = "MIT OR Apache-2.0"
 keywords = ["pointer", "field-projection", "volatile", "mmio", "bare-metal"]
 categories = ["no-std", "no-std::no-alloc", "embedded", "rust-patterns"]

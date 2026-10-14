@@ -2,13 +2,12 @@
 name = "many-spans"
 version = "1.0.0"
 edition = "2024"
-description = ""
+description = "Static and conditional implementation according to presence of any continuous and named set of fields on a struct"
 # homepage = "https://github.com/adakite1/many-spans"
 # repository = "https://github.com/adakite1/many-spans"
-readme = "README.md"
 license = "MIT OR Apache-2.0"
 keywords = []
 categories = []
 
 [dependencies]
-many-spans-macros = { path = "../many-spans-macros" }
+many-spans-macros = { version = "1.0.0", path = "../many-spans-macros" }
