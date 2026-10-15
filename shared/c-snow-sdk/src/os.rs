@@ -305,6 +305,12 @@ pub extern "C" fn OS_SetArenaHi(arena_index: u32, new_hi: u32) {
     raw_field!(SYS_AREA_SYSTEM_WORK as *mut OSSystemWork, mut arenaInfo~, final mut hi[arena_index as usize]).set(new_hi);
 }
 
+/*(asm-corpus-filename: arm7/wram/sub_037FCB90, objdump-symbol-name: inline(=arm7_bin/set_arena_lo, all~~4))DONE('os_arena')*/
+#[inline(always)]
+pub fn set_arena_lo(arena_index: u32, new_lo: u32) {
+    raw_field!(SYS_AREA_SYSTEM_WORK as *mut OSSystemWork, mut arenaInfo~, final mut lo[arena_index as usize]).set(new_lo);
+}
+
 /*(asm-corpus-filename: arm7/wram/sub_037FCB90, objdump-symbol-name: arm7_bin/OS_SetArenaLo)DONE('os_arena')*/
 /*(asm-corpus-filename: OS_SetArenaLo, objdump-symbol-name: arm9_bin/OS_SetArenaLo)DONE('os_arena')*/
 #[inline(never)]
@@ -312,7 +318,7 @@ pub extern "C" fn OS_SetArenaHi(arena_index: u32, new_hi: u32) {
 #[cfg_attr(armv5te, unsafe(link_section = ".text.origaddr.0207A6EC"))]
 #[unsafe(no_mangle)]
 pub extern "C" fn OS_SetArenaLo(arena_index: u32, new_lo: u32) {
-    raw_field!(SYS_AREA_SYSTEM_WORK as *mut OSSystemWork, mut arenaInfo~, final mut lo[arena_index as usize]).set(new_lo);
+    set_arena_lo(arena_index, new_lo);
 }
 
 /*(asm-corpus-filename: arm7/wram/EnableIrqFlag, objdump-symbol-name: arm7_bin/OS_CpuDisableIrq)DONE('os_system')*/
@@ -440,6 +446,7 @@ pub extern "C" fn OS_GetConsoleType() -> u32 {
     OSi_ConsoleTypeCache.set(const { OS_CONSOLE_NITRO | OS_CONSOLE_DEV_CARD | OS_CONSOLE_SIZE_4MB })
 }
 
+/*(asm-corpus-filename: arm9/main/OS_Init, objdump-symbol-name: arm9_bin/OS_Init)*/
 #[inline(never)]
 #[unsafe(link_section = ".text.origaddr.0207A36C")]
 #[unsafe(no_mangle)]
@@ -729,13 +736,93 @@ armv4t => {
 
 /* ====== ARM7 ====== */
 
-use crate::{consts::REG_IE_VBLANK_SHIFT, svc::SVC_WaitByLoop};
+use crate::{consts::{OS_ARENA_MAIN_SUBPRIV, OS_ARENA_WRAM_SHARED_ARM7, OS_ARENA_WRAM_SUBPRIV, REG_IE_VBLANK_SHIFT}, svc::SVC_WaitByLoop};
 
 #[inline(never)]
 #[unsafe(link_section = ".text.wram.origaddr.037FB748")]
 #[unsafe(no_mangle)]
 pub extern "C" fn OSi_IrqVBlank() {
     
+}
+
+/*(asm-corpus-filename: arm7/wram/sub_037FC9EC, objdump-symbol-name: arm7_bin/OS_Init)*/
+#[inline(never)]
+#[unsafe(link_section = ".text.wram.origaddr.037FC9EC")]
+#[unsafe(no_mangle)]
+pub extern "C" fn OS_Init() {
+    OS_InitArena();
+
+    //TODO:
+}
+
+/*(asm-corpus-filename: [arm7/wram/sub_037FCA1C, arm7/wram/sub_037FCA58], objdump-symbol-name: arm7_bin/OS_InitArena)DONE('os_arena')*/
+#[inline(never)]
+#[unsafe(link_section = ".text.wram.origaddr.037FCA1C")]
+#[unsafe(no_mangle)]
+pub extern "C" fn OS_InitArena() {
+    if OSi_Initialized.get() != 0 {
+        return;
+    }
+    OSi_Initialized.set(1);
+
+    OS_SetArenaHi(OS_ARENA_MAIN_SUBPRIV, OS_GetInitArenaHi(OS_ARENA_MAIN_SUBPRIV));
+    set_arena_lo(OS_ARENA_MAIN_SUBPRIV, OS_GetInitArenaLo(OS_ARENA_MAIN_SUBPRIV));
+
+    OS_SetArenaHi(OS_ARENA_WRAM_SHARED_ARM7, OS_GetInitArenaHi(OS_ARENA_WRAM_SHARED_ARM7));
+    set_arena_lo(OS_ARENA_WRAM_SHARED_ARM7, OS_GetInitArenaLo(OS_ARENA_WRAM_SHARED_ARM7));
+
+    OS_SetArenaHi(OS_ARENA_WRAM_SUBPRIV, OS_GetInitArenaHi(OS_ARENA_WRAM_SUBPRIV));
+    set_arena_lo(OS_ARENA_WRAM_SUBPRIV, OS_GetInitArenaLo(OS_ARENA_WRAM_SUBPRIV));
+}
+
+unsafe extern "C" {
+    static __heap_in_shared_wram_hi: u8;
+    static __heap_in_private_wram_hi: u8;
+    static __main_bss_end: u8;
+    static __heap_in_shared_wram_lo: u8;
+    static __heap_in_private_wram_lo: u8;
+}
+
+/*(asm-corpus-filename: arm7/wram/sub_037FCABC, objdump-symbol-name: arm7_bin/OS_GetInitArenaHi)DONE('os_arena')*/
+#[inline(never)]
+#[unsafe(link_section = ".text.wram.origaddr.037FCABC")]
+#[unsafe(no_mangle)]
+pub extern "C" fn OS_GetInitArenaHi(arena_index: u32) -> u32 {
+    match arena_index {
+        1 => {
+            SYS_AREA_START
+        },
+        7 => {
+            linker_addr(&raw const __heap_in_shared_wram_hi)
+        },
+        8 => {
+            linker_addr(&raw const __heap_in_private_wram_hi)
+        },
+        _ => {
+            0
+        },
+    }
+}
+
+/*(asm-corpus-filename: arm7/wram/sub_037FCB38, objdump-symbol-name: arm7_bin/OS_GetInitArenaLo)DONE('os_arena')*/
+#[inline(never)]
+#[unsafe(link_section = ".text.wram.origaddr.037FCB38")]
+#[unsafe(no_mangle)]
+pub extern "C" fn OS_GetInitArenaLo(arena_index: u32) -> u32 {
+    match arena_index {
+        1 => {
+            linker_addr(&raw const __main_bss_end)
+        },
+        7 => {
+            linker_addr(&raw const __heap_in_shared_wram_lo)
+        },
+        8 => {
+            linker_addr(&raw const __heap_in_private_wram_lo)
+        },
+        _ => {
+            0
+        },
+    }
 }
 
 /*(asm-corpus-filename: arm7/wram/sub_037FDD64, objdump-symbol-name: arm7_bin/OS_SpinWait)DONE('os_system')*/
@@ -822,6 +909,9 @@ pub static OSi_DynamicIrqCallbackInfo: Global<OSDynamicIrqCallbackInfoTable> = G
         }
     }; 1],
 });
+
+#[unsafe(link_section = ".bss.wram.origaddr.038077FC")]
+pub static OSi_Initialized: Global<u32> = Global::new(0);
 
 /*cfg_select*/ } _
 => {} }

@@ -172,6 +172,37 @@ SECTIONS {
     __irq_handler_pointer = __wram_top - 4; /* 0x03810000 - 4 = 0x380FFFC */
     ASSERT(__wram_bss_end <= __system_stack_pointer - __sys_stack_size, "WRAM data/bss overlaps the stacks")
 
+    __system_stack_size_multifunctional = __sys_stack_size;
+
+    __irq_stack_bottom = __irq_stack_top - __irq_stack_size;
+    __system_stack_top_real_without_anti_aapcs_align = __irq_stack_bottom;
+
+    __sys_stack_sz_neg = (__system_stack_size_multifunctional & 0x80000000) != 0;
+    __sys_stack_sz_abs = (__sys_stack_sz_neg
+                            ? (0 - __system_stack_size_multifunctional)
+                            : __system_stack_size_multifunctional) & 0x7FFFFFFF;
+
+    __heap_in_shared_wram_lo = MIN(__wram_bss_end, 0x03800000);
+    __heap_in_shared_wram_hi = 0x03800000;
+
+    __heap_in_private_wram_lo = MAX(__wram_bss_end, 0x03800000);
+    __heap_in_private_wram_hi =
+        (__system_stack_size_multifunctional == 0)
+            ? __heap_in_private_wram_lo
+            : (__sys_stack_sz_neg
+                ? (__heap_in_private_wram_lo + __sys_stack_sz_abs)
+                : (__system_stack_top_real_without_anti_aapcs_align - __sys_stack_sz_abs));
+
+    __system_stack_bottom = __heap_in_private_wram_hi;
+    __system_stack_size = __system_stack_top_real_without_anti_aapcs_align - __system_stack_bottom;
+    __heap_in_shared_wram = __heap_in_shared_wram_hi - __heap_in_shared_wram_lo;
+    __heap_in_private_wram = __heap_in_private_wram_hi - __heap_in_private_wram_lo;
+
+    ASSERT(__heap_in_private_wram_hi >= __heap_in_private_wram_lo,
+        "system stack size too large, overlaps WRAM fixed region")
+    ASSERT(__heap_in_private_wram_hi <= __irq_stack_bottom,
+        "heap arena in private WRAM has a size set too large, overlaps IRQ stack")
+
     .debug_abbrev 0 : { *(.debug_abbrev) }
     .debug_addr 0 : { *(.debug_addr) }
     .debug_aranges 0 : { *(.debug_aranges) }

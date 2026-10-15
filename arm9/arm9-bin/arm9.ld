@@ -213,7 +213,11 @@ SECTIONS {
         > 0: the stack gets exactly that many bytes, and the arena gets the leftovers.
         < 0: reversed, where the arena gets |multifunctional_size| bytes, and the stack gets the leftovers.
         == 0: give everything to the stack (clamped so it's at least __dtcm_base, which does nothing, and I don't know
-          why the sdk code does this).
+          why the sdk code does this) (Update: Figured this out now, I'm pretty sure the calculation was copied between arm7 and arm9,
+          it's some kind of "clamp bottom" because for the arm7 there are two wram arenas, one in the shared region and the
+          other in the private region, and so the __heap_in_private_wram_lo, if taken by __wram_bss_end, can be *BEFORE* the
+          start of the private starting point at 0x03800000 if the wram static image is smaller than the shared WRAM, which wouldn't
+          be right, so the value just ensures the entire arena is above a certain address).
          */
     __system_stack_size_multifunctional = 0;
 
