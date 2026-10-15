@@ -25,19 +25,33 @@ pub mod sys;
 
 pub mod svc;
 
+/*(asm-corpus-filename: arm7/wram/NitroSpMain, objdump-symbol-name: arm7_bin/SnowSpMain)*/
 #[cfg(armv4t)]
-#[unsafe(link_section = ".text.wram")]
+#[unsafe(link_section = ".text.wram.origaddr.037F8000")]
 #[unsafe(no_mangle)]
-pub extern "C" fn HardwareInterrupt() -> ! {
-    core::hint::black_box(2+2);
+pub extern "C" fn SnowSpMain() -> ! {
+    use crate::os::OS_Init;
+
+    OS_Init();
+    panic!();
+}
+
+/*(asm-corpus-filename: arm9/main/NitroMain, objdump-symbol-name: arm9_bin/SnowMain)*/
+#[cfg(armv5te)]
+#[unsafe(link_section = ".text.origaddr.02000C6C")]
+#[unsafe(no_mangle)]
+pub extern "C" fn SnowMain() -> ! {
+    use crate::os::OS_Init;
+
+    OS_Init();
     panic!();
 }
 
 #[cfg(armv4t)]
 #[unsafe(link_section = ".text.wram")]
 #[unsafe(no_mangle)]
-pub extern "C" fn SnowSpMain() -> ! {
-    core::hint::black_box(1+1);
+pub extern "C" fn HardwareInterrupt() -> ! {
+    core::hint::black_box(2+2);
     panic!();
 }
 
@@ -46,16 +60,6 @@ pub extern "C" fn SnowSpMain() -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn HardwareInterrupt() -> ! {
     core::hint::black_box(2+2);
-    panic!();
-}
-
-#[cfg(armv5te)]
-#[unsafe(link_section = ".text.origaddr.02000C6C")]
-#[unsafe(no_mangle)]
-pub extern "C" fn SnowMain() -> ! {
-    use crate::os::OS_Init;
-
-    OS_Init();
     panic!();
 }
 
