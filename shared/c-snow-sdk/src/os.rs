@@ -1,7 +1,7 @@
 use many_spans::{imply, many_spans};
 use raw_traversal::{ElemPtrs, raw_field};
 
-use crate::{Global, asm::{OS_CpuDisableIrq_ASM, OS_CpuRestoreIrq_ASM}, consts::{arm7::{OSi_IRQ_CALLBACK_MAX_ARM7, REG_IE_IRQ_SOURCES_MAX_ARM7}, arm9::{OSi_IRQ_CALLBACK_MAX_ARM9, REG_IE_IRQ_SOURCES_MAX_ARM9}, DMA_CHANNELS_COUNT, HW_MAIN_MEM_DEBUGGER_OFFSET, IRQ_FUTEX_BITS, OS_ARENA_DTCM, OS_ARENA_ITCM, OS_ARENA_MAIN, OS_ARENA_MAINEX, OS_ARENA_SYS_AREA_SHARED, OS_ARENA_WRAM_SHARED_ARM9, OS_CONSOLE_DEV_CARD, OS_CONSOLE_NITRO, OS_CONSOLE_SIZE_4MB, OS_CONSOLE_SIZE_MASK, OSi_CONSOLE_NOT_DETECT, REG_IE_DMA_0_FINISHED_SHIFT, REG_IE_DMA_3_FINISHED_SHIFT, REG_IE_IRQ_SOURCES_MAX, REG_IE_TIMER_0_OVFLOW_SHIFT, REG_IE_TIMER_3_OVFLOW_SHIFT, TIMERS_COUNT}, cp15_size_encoding, linker_addr, read, reg::{REG_IE, REG_IF, REG_IME}, set_cp15_region, sys::{HW_CARD_ROM_HEADER_SIZE, HW_DOWNLOAD_PARAMETER_SIZE, OSSystemWork, SYS_AREA_START, SYS_AREA_SYSTEM_WORK, red::hw_red_reserved}, write};
+use crate::{Global, asm::{OS_CpuDisableIrq_ASM, OS_CpuRestoreIrq_ASM}, consts::{arm7::{OSi_IRQ_CALLBACK_MAX_ARM7, REG_IE_IRQ_SOURCES_MAX_ARM7}, arm9::{OSi_IRQ_CALLBACK_MAX_ARM9, REG_IE_IRQ_SOURCES_MAX_ARM9}, DMA_CHANNELS_COUNT, IRQ_FUTEX_BITS, REG_IE_DMA_0_FINISHED_SHIFT, REG_IE_DMA_3_FINISHED_SHIFT, REG_IE_IRQ_SOURCES_MAX, REG_IE_TIMER_0_OVFLOW_SHIFT, REG_IE_TIMER_3_OVFLOW_SHIFT, REG_IE_VBLANK_SHIFT, TIMERS_COUNT}, linker_addr, read, reg::{REG_IE, REG_IF, REG_IME}, sys::{OSSystemWork, SYS_AREA_START, SYS_AREA_SYSTEM_WORK}, write};
 
 #[repr(C)]
 pub struct OSThreadQueue {
@@ -199,6 +199,37 @@ pub extern "C" fn OSi_IrqTimer3() {
     OSi_DynamicIrqCallback(DMA_CHANNELS_COUNT as u32 + 3);
 }
 
+/*(asm-corpus-filename: arm7/wram/sub_037FB7BC, objdump-symbol-name: arm7_bin/OS_SetIrqFunction)DONE('os_interrupt')*/
+/*(asm-corpus-filename: OS_SetIrqFunction, objdump-symbol-name: arm9_bin/OS_SetIrqFunction)DONE('os_interrupt', us, eu, jp)*/
+#[inline(never)]
+#[cfg_attr(armv4t, unsafe(link_section = ".text.wram.origaddr.037FB7BC"))]
+#[cfg_attr(armv5te, unsafe(link_section = ".text.origaddr.02078A98"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn OS_SetIrqFunction(mut mask: u32, function: Option<extern "C" fn()>) {
+    let handlers = raw_field!(irq_table_handlers(OS_IRQTable.as_ptr()), final);
+    let table = OSi_DynamicIrqCallbackInfo.as_ptr();
+    let vblank_callback = imply!(table: *mut OSDynamicIrqCallbackInfoTable => OSDynamicIrqCallbackInfoTable_::VBlank { Some(raw_field!(table, mut vblank_callbacks[0])) } None);
+    for i in 0..REG_IE_IRQ_SOURCES_MAX {
+        if mask & 1 != 0 {
+            let info = match i {
+                REG_IE_DMA_0_FINISHED_SHIFT..=REG_IE_DMA_3_FINISHED_SHIFT => Some(raw_field!(OSi_DynamicIrqCallbackInfo.as_ptr(), mut dma_callbacks[i - REG_IE_DMA_0_FINISHED_SHIFT])),
+                REG_IE_TIMER_0_OVFLOW_SHIFT..=REG_IE_TIMER_3_OVFLOW_SHIFT => Some(raw_field!(OSi_DynamicIrqCallbackInfo.as_ptr(), mut timer_callbacks[i - REG_IE_TIMER_0_OVFLOW_SHIFT])),
+                REG_IE_VBLANK_SHIFT if vblank_callback.is_some() => vblank_callback,
+                _ => {
+                    handlers.index(i).set(function);
+                    None
+                },
+            };
+            if let Some(info) = info {
+                raw_field!(info, final! mut func).set(unsafe { core::mem::transmute::<Option<extern "C" fn()>, Option<extern "C" fn(*mut core::ffi::c_void)>>(function) });
+                raw_field!(info, final! mut enable).set(1);
+                raw_field!(info, final! mut arg).set(core::ptr::null_mut());
+            }
+        }
+        mask >>= 1;
+    }
+}
+
 /// How to read: in the sense of "overwrite the set IRQ sources", "set" in the adjective sense of something having been prepared and being ready.
 ///
 /// You overwrite which IRQ sources you are set and ready to start receiving requests from (and for which ones you are not).
@@ -346,7 +377,7 @@ armv5te => {
 
 /* ====== ARM9 ====== */
 
-use crate::{asm::OS_SpinWait_ASM, dtcm::{OS_IRQTable, OSi_IrqThreadQueue}};
+use crate::{asm::OS_SpinWait_ASM, consts::{HW_MAIN_MEM_DEBUGGER_OFFSET, OS_ARENA_DTCM, OS_ARENA_ITCM, OS_ARENA_MAIN, OS_ARENA_MAINEX, OS_ARENA_SYS_AREA_SHARED, OS_ARENA_WRAM_SHARED_ARM9, OS_CONSOLE_DEV_CARD, OS_CONSOLE_NITRO, OS_CONSOLE_SIZE_4MB, OS_CONSOLE_SIZE_MASK, OSi_CONSOLE_NOT_DETECT}, cp15_size_encoding, dtcm::{OS_IRQTable, OSi_IrqThreadQueue}, set_cp15_region, sys::{HW_CARD_ROM_HEADER_SIZE, HW_DOWNLOAD_PARAMETER_SIZE, red::hw_red_reserved}};
 
 /*(asm-corpus-filename: OS_InitIrqTable, objdump-symbol-name: arm9_bin/OS_InitIrqThreadQueue)DONE('os_interrupt')*/
 #[inline(never)]
@@ -355,32 +386,6 @@ use crate::{asm::OS_SpinWait_ASM, dtcm::{OS_IRQTable, OSi_IrqThreadQueue}};
 pub extern "C" fn OS_InitIrqThreadQueue() {
     raw_field!(OSi_IrqThreadQueue.as_ptr(), final mut tail).set(core::ptr::null_mut());
     raw_field!(OSi_IrqThreadQueue.as_ptr(), final mut head).set(core::ptr::null_mut());
-}
-
-/*(asm-corpus-filename: OS_SetIrqFunction, objdump-symbol-name: arm9_bin/OS_SetIrqFunction)DONE('os_interrupt', us, eu, jp)*/
-#[inline(never)]
-#[unsafe(link_section = ".text.origaddr.02078A98")]
-#[unsafe(no_mangle)]
-pub extern "C" fn OS_SetIrqFunction(mut mask: u32, function: Option<extern "C" fn()>) {
-    let handlers = raw_field!(irq_table_handlers(OS_IRQTable.as_ptr()), final);
-    for i in 0..REG_IE_IRQ_SOURCES_MAX {
-        if mask & 1 != 0 {
-            let info = match i {
-                REG_IE_DMA_0_FINISHED_SHIFT..=REG_IE_DMA_3_FINISHED_SHIFT => Some(raw_field!(OSi_DynamicIrqCallbackInfo.as_ptr(), mut dma_callbacks[i - REG_IE_DMA_0_FINISHED_SHIFT])),
-                REG_IE_TIMER_0_OVFLOW_SHIFT..=REG_IE_TIMER_3_OVFLOW_SHIFT => Some(raw_field!(OSi_DynamicIrqCallbackInfo.as_ptr(), mut timer_callbacks[i - REG_IE_TIMER_0_OVFLOW_SHIFT])),
-                _ => {
-                    handlers.index(i).set(function);
-                    None
-                },
-            };
-            if let Some(info) = info {
-                raw_field!(info, final! mut func).set(unsafe { core::mem::transmute::<Option<extern "C" fn()>, Option<extern "C" fn(*mut core::ffi::c_void)>>(function) });
-                raw_field!(info, final! mut enable).set(1);
-                raw_field!(info, final! mut arg).set(core::ptr::null_mut());
-            }
-        }
-        mask >>= 1;
-    }
 }
 
 /*(asm-corpus-filename: OS_GetIrqFunction, objdump-symbol-name: arm9_bin/OS_GetIrqFunction)DONE('os_interrupt', us, eu, jp)*/
@@ -736,7 +741,7 @@ armv4t => {
 
 /* ====== ARM7 ====== */
 
-use crate::{consts::{OS_ARENA_MAIN_SUBPRIV, OS_ARENA_WRAM_SHARED_ARM7, OS_ARENA_WRAM_SUBPRIV, REG_IE_VBLANK_SHIFT}, svc::SVC_WaitByLoop};
+use crate::{consts::{OS_ARENA_MAIN_SUBPRIV, OS_ARENA_WRAM_SHARED_ARM7, OS_ARENA_WRAM_SUBPRIV}, svc::SVC_WaitByLoop};
 
 #[inline(never)]
 #[unsafe(link_section = ".text.wram.origaddr.037FB748")]
