@@ -67,14 +67,14 @@ impl Span {
         Span { lo: k, hi: Some(k + 1) }
     }
 
-    fn pick(self, len: usize) -> Range<usize> {
+    pub(crate) fn pick(self, len: usize) -> Range<usize> {
         let hi = self.hi.unwrap_or(len).min(len);
         self.lo.min(hi)..hi
     }
 
-    fn parse(s: &str) -> Result<Span, String> {
+    pub(crate) fn parse(s: &str) -> Result<Span, String> {
         let num = |t: &str| {
-            t.trim().parse::<usize>().map_err(|_| format!("'{s}' is not an index or range (k, a..b, a..=b, a.., ..b, ..)"))
+            t.trim().parse::<usize>().map_err(|_| format!("'{s}' is not an index or a range (k, a..b, a..=b, a.., ..b, ..)"))
         };
         let Some((a, b)) = s.split_once("..") else {
             return if s.is_empty() { Ok(Span::ALL) } else { num(s).map(Span::at) };

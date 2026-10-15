@@ -13,6 +13,7 @@ use crate::corpus_gen;
 use crate::corpus_inline as inline;
 use crate::corpus_keep as keep;
 use crate::corpus_layout as layout;
+use crate::corpus_mods::{Lines, Mods};
 
 const REGIONS: [&str; 3] = ["us", "eu", "jp"];
 const ARM9_FEATURES: [(&str, &str); 3] = [("us", "na"), ("eu", "eu"), ("jp", "jp")];
@@ -28,7 +29,7 @@ const DEFAULT_CORPUS: &str = "asm-corpus";
 
 const LIST_STYLE_MAX_LINES: usize = 25;
 
-const MARK_TAG: &str = "\x01mark\t";
+pub(crate) const MARK_TAG: &str = "\x01mark\t";
 const ALIGN_MAX_CELLS: usize = 2_000_000;
 const GAP_OPEN: i32 = 5;
 const GAP_EXTEND: i32 = 0;
@@ -52,7 +53,7 @@ const USAGE: &str = "usage: cargo xtask corpus [run|stub|lint|fix|move|keep-symb
                      [--style <auto|list|columns>[,compact][,align][,label_last|label_first]] [--labels hide|before|after] [move --stage|--stage-strict] [status --group-by groups[+paths]]";
 
 static COMMAND: LazyLock<Regex> = LazyLock::new(|| {
-    let list = r"(\[[^\]]*\]|[^,\s\)\]]+)";
+    let list = r"(\[[^\]]*\]|[^,\s\)\]\{]+(?:\{[^}]*\})?)";
     Regex::new(&format!(
         r"/\*\(asm-corpus-filename:\s*{list}\s*,\s*objdump-symbol-name:\s*(.*?)\s*\)(DONE\(\s*'([^']*)'\s*((?:,\s*[A-Za-z]+\s*)*)\))?\*/"
     ))
@@ -61,8 +62,8 @@ static COMMAND: LazyLock<Regex> = LazyLock::new(|| {
 
 static STUB: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"/\*\(stub\s+text:\s*([^)\s]+)\s*\)\*/").unwrap());
 static LINK_SECTION: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"link_section\s*=\s*"([^"]+)""#).unwrap());
-static INSN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^([\s>]*[0-9a-f]+:)\t([0-9a-f ]+)\t(.*)$").unwrap());
-static LABEL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[0-9a-f]+ <[^>]+>:$").unwrap());
+pub(crate) static INSN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^([\s>]*[0-9a-f]+:)\t([0-9a-f ]+)\t(.*)$").unwrap());
+pub(crate) static LABEL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[0-9a-f]+ <[^>]+>:$").unwrap());
 static WORD_LOAD: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\tldr(?:eq|ne|cs|hs|cc|lo|mi|pl|vs|vc|hi|ls|ge|lt|gt|le|al)?\t[a-z0-9]+, \[pc(?:, #-?\d+)?\]\t@ \(?([0-9a-f]+)")
         .unwrap()
@@ -219,8 +220,8 @@ impl SymSpec {
 struct RawCommand {
     line: usize,
     indent: String,
-    units: Vec<String>,
-    syms: Vec<SymSpec>,
+    units: Vec<(String, Mods)>,
+    syms: Vec<(SymSpec, Lines)>,
     done: Option<(String, BTreeSet<String>)>,
 }
 
@@ -228,8 +229,8 @@ struct Cmd {
     source: usize,
     line: usize,
     indent: String,
-    units: Vec<usize>,
-    syms: Vec<SymSpec>,
+    units: Vec<(usize, Mods)>,
+    syms: Vec<(SymSpec, Lines)>,
     done: Option<(String, BTreeSet<String>)>,
     state: State,
 }
@@ -248,7 +249,7 @@ enum Style {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Labels {
+pub(crate) enum Labels {
     Hide,
     Before,
     After,
@@ -571,12 +572,19 @@ fn line_of(text: &str, byte: usize) -> usize {
     text[..byte].matches('\n').count()
 }
 
-fn parse_list(s: &str) -> Vec<String> {
+fn parse_list(s: &str) -> Result<Vec<(String, Mods)>, String> {
     let items: Vec<&str> = match s.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
-        Some(inner) => inner.split(',').map(str::trim).collect(),
+        Some(inner) => split_top(inner),
         None => vec![s.trim()],
     };
-    items.into_iter().filter(|i| !i.is_empty() && *i != "none").map(String::from).collect()
+    let mut out = Vec::new();
+    for item in items {
+        let (name, mods) = Mods::split(item)?;
+        if !name.is_empty() && name != "none" {
+            out.push((name.to_string(), mods));
+        }
+    }
+    Ok(out)
 }
 
 pub(crate) fn split_top(s: &str) -> Vec<&str> {
@@ -584,8 +592,8 @@ pub(crate) fn split_top(s: &str) -> Vec<&str> {
     let (mut depth, mut start) = (0i32, 0);
     for (i, ch) in s.char_indices() {
         match ch {
-            '(' | '[' => depth += 1,
-            ')' | ']' => depth -= 1,
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
             ',' if depth == 0 => {
                 out.push(s[start..i].trim());
                 start = i + 1;
@@ -597,7 +605,7 @@ pub(crate) fn split_top(s: &str) -> Vec<&str> {
     out
 }
 
-fn parse_syms(s: &str) -> Result<Vec<SymSpec>, String> {
+fn parse_syms(s: &str) -> Result<Vec<(SymSpec, Lines)>, String> {
     let s = s.trim();
     let items = match s.strip_prefix('[').and_then(|r| r.strip_suffix(']')) {
         Some(inner) if split_top(s).len() == 1 => split_top(inner),
@@ -607,14 +615,22 @@ fn parse_syms(s: &str) -> Result<Vec<SymSpec>, String> {
         return Err(format!("'{s}': write multiple symbols as a [...] list"));
     }
     let mut out = Vec::new();
-    for item in items.into_iter().filter(|i| !i.is_empty() && *i != "none") {
-        if let Some(inner) = item.strip_prefix("inline(").and_then(|r| r.strip_suffix(')')) {
-            out.push(SymSpec::Inline(inline::InlineSpec::parse(inner)?));
+    for whole in items {
+        let (item, mods) = Mods::split(whole)?;
+        if item.is_empty() || item == "none" {
+            continue;
+        }
+        if mods.ignore {
+            return Err(format!("'{whole}': ignore only applies to asm-corpus-filename items"));
+        }
+        let spec = if let Some(inner) = item.strip_prefix("inline(").and_then(|r| r.strip_suffix(')')) {
+            SymSpec::Inline(inline::InlineSpec::parse(inner)?)
         } else if item.contains(|c: char| c.is_whitespace() || "()[],".contains(c)) {
             return Err(format!("'{item}' is not a symbol name"));
         } else {
-            out.push(SymSpec::Plain(item.to_string()));
-        }
+            SymSpec::Plain(item.to_string())
+        };
+        out.push((spec, mods.lines));
     }
     Ok(out)
 }
@@ -654,7 +670,10 @@ fn parse_commands(rel: &str, text: &str, errors: &mut Vec<String>) -> Vec<RawCom
         out.push(RawCommand {
             line: line_of(text, m.end() - 1),
             indent,
-            units: parse_list(&c[1]),
+            units: parse_list(&c[1]).unwrap_or_else(|e| {
+                errors.push(format!("{rel}:{}: {e}", start_line + 1));
+                Vec::new()
+            }),
             syms: parse_syms(&c[2]).unwrap_or_else(|e| {
                 errors.push(format!("{rel}:{}: {e}", start_line + 1));
                 Vec::new()
@@ -1906,9 +1925,9 @@ fn pipeline(rsdec: &Path, corpus_root: &Path, mode: Mode, opts: Options, retry: 
     for (si, s) in sources.iter().enumerate() {
         for c in &s.commands {
             let mut units = Vec::new();
-            for q in &c.units {
+            for (q, mods) in &c.units {
                 match resolve_unit(&lock, q) {
-                    Ok(i) => units.push(i),
+                    Ok(i) => units.push((i, mods.clone())),
                     Err(e) => errors.push(format!("{}:{}: {e}", s.rel, c.line + 1)),
                 }
             }
@@ -1921,7 +1940,7 @@ fn pipeline(rsdec: &Path, corpus_root: &Path, mode: Mode, opts: Options, retry: 
 
     let mut records: HashMap<usize, Record> = HashMap::new();
     for (_, _, units) in &raw_cmds {
-        for &u in units {
+        for &(u, _) in units {
             if let std::collections::hash_map::Entry::Vacant(v) = records.entry(u) {
                 let path = corpus.root.join(corpus.preferred_copy(&lock[u].path));
                 let rec: Record =
@@ -1934,7 +1953,7 @@ fn pipeline(rsdec: &Path, corpus_root: &Path, mode: Mode, opts: Options, retry: 
     let cmds: Vec<Cmd> = raw_cmds
         .into_iter()
         .map(|(si, c, units)| {
-            let recs: Vec<&Record> = units.iter().map(|u| &records[u]).collect();
+            let recs: Vec<&Record> = units.iter().map(|(u, _)| &records[u]).collect();
             let state = state_of(&recs, &c.done);
             Cmd {
                 source: si,
@@ -1951,7 +1970,7 @@ fn pipeline(rsdec: &Path, corpus_root: &Path, mode: Mode, opts: Options, retry: 
     let mut target: BTreeMap<&str, &str> = BTreeMap::new();
     for c in &cmds {
         if let State::Complete(group) = &c.state {
-            for &u in &c.units {
+            for &(u, _) in c.units.iter().filter(|(_, m)| !m.ignore) {
                 let path = lock[u].path.as_str();
                 if let Some(prev) = target.insert(path, group)
                     && prev != group
@@ -1997,7 +2016,7 @@ fn pipeline(rsdec: &Path, corpus_root: &Path, mode: Mode, opts: Options, retry: 
         let mut resolved: HashMap<(usize, usize), (Cpu, String)> = HashMap::new();
         for (ci, c) in cmds.iter().enumerate() {
             let State::Stage(stage) = c.state else { continue };
-            for (qi, spec) in c.syms.iter().enumerate() {
+            for (qi, (spec, _)) in c.syms.iter().enumerate() {
                 for q in spec.keep_queries() {
                     match builds.resolve_sym(&q, &texts)? {
                         Ok((cpu, sym)) => {
@@ -2044,9 +2063,9 @@ fn pipeline(rsdec: &Path, corpus_root: &Path, mode: Mode, opts: Options, retry: 
             }
             let at = format!("{}:{}", sources[c.source].rel, c.line + 1);
             let mut left = Vec::new();
-            for &u in &c.units {
-                let e = &lock[u];
-                let rec = &records[&u];
+            for (u, mods) in &c.units {
+                let e = &lock[*u];
+                let rec = &records[u];
                 if !left.is_empty() {
                     left.push(String::new());
                 }
@@ -2056,18 +2075,18 @@ fn pipeline(rsdec: &Path, corpus_root: &Path, mode: Mode, opts: Options, retry: 
                 let listing = |r: &str| rec.regions.get(r).and_then(|x| x.listing.as_ref());
                 match rec.regions.get(stage) {
                     Some(RegionEntry { listing: Some(l), .. }) => {
-                        left.extend(annotate_corpus_listing(l))
+                        left.extend(mods.lines.apply(annotate_corpus_listing(l), opts.labels))
                     }
                     Some(RegionEntry { same_as: Some(b), .. }) => {
                         left.push(format!("-- {stage} bytes identical to {b}"));
                         let l = listing(b).map(|l| annotate_corpus_listing(l)).unwrap_or_default();
-                        left.extend(l);
+                        left.extend(mods.lines.apply(l, opts.labels));
                     }
                     _ => left.push(format!("-- absent in {stage}")),
                 }
             }
             let mut right = Vec::new();
-            for (qi, spec) in c.syms.iter().enumerate() {
+            for (qi, (spec, filter)) in c.syms.iter().enumerate() {
                 if !right.is_empty() {
                     right.push(String::new());
                 }
@@ -2080,7 +2099,7 @@ fn pipeline(rsdec: &Path, corpus_root: &Path, mode: Mode, opts: Options, retry: 
                     SymSpec::Inline(spec) => inline_lines(&mut builds, &mut dwarf, spec, stage, opts.labels, &at, &mut inline_warnings),
                 };
                 match lines {
-                    Ok(lines) => right.extend(lines),
+                    Ok(lines) => right.extend(filter.apply(lines, opts.labels)),
                     Err(e) => errors.push(format!("{at}: {e}")),
                 }
             }
@@ -2252,7 +2271,7 @@ fn keep_cmd(rsdec: &Path, requested: &[String], remove: bool) -> Result<()> {
                 .iter()
                 .flat_map(|(path, text)| {
                     let stripped = strip_blocks(text).unwrap_or_else(|_| text.clone());
-                    parse_commands(&rel_str(rsdec, path), &stripped, &mut errors).into_iter().flat_map(|c| c.syms).flat_map(|s| s.keep_queries())
+                    parse_commands(&rel_str(rsdec, path), &stripped, &mut errors).into_iter().flat_map(|c| c.syms).flat_map(|(s, _)| s.keep_queries())
                 })
                 .collect()
         } else {
@@ -2373,7 +2392,7 @@ fn print_status(lock: &[LockEntry], sources: &[Source], cmds: &[Cmd], target: &B
             let done = c.done.as_ref().map_or(String::new(), |(g, r)| {
                 format!(" DONE('{g}'{})", r.iter().map(|r| format!(", {r}")).collect::<String>())
             });
-            let units: Vec<&str> = c.units.iter().map(|&u| lock[u].stem()).collect();
+            let units: Vec<&str> = c.units.iter().map(|&(u, _)| lock[u].stem()).collect();
             println!(
                 "  {}:{}  stage {stage}{done}  [{}]",
                 sources[c.source].rel,

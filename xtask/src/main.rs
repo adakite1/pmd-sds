@@ -8,6 +8,7 @@ mod corpus_gen;
 mod corpus_inline;
 mod corpus_keep;
 mod corpus_layout;
+mod corpus_mods;
 mod corpus_move;
 
 /// Turns an ELF binary to a flat memory image, along with the base and ELF entrypoint addresses.
