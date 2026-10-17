@@ -12,7 +12,7 @@
   "runOnSave.commands": [
     {
       "match": "^(?!.*/(xtask|target)/).*\\.(rs|s)$",
-      "command": "cd ${workspaceFolder} && cargo -q xtask corpus --resolve-completed-symbols --style columns,compact,align --labels before --stub-mode position-with-warn",
+      "command": "cd ${workspaceFolder} && cargo -q xtask corpus --resolve-completed-symbols --style columns,compact --labels before --stub-mode position-with-warn",
       "runIn": "backend",
       "runningStatusMessage": "Running corpus sync...",
       "finishStatusMessage": "Done.",
