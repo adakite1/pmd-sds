@@ -14,6 +14,7 @@ use crate::corpus_inline as inline;
 use crate::corpus_keep as keep;
 use crate::corpus_layout as layout;
 use crate::corpus_mods::{Lines, Mods};
+use crate::corpus_rename as rename;
 
 const REGIONS: [&str; 3] = ["us", "eu", "jp"];
 const ARM9_FEATURES: [(&str, &str); 3] = [("us", "na"), ("eu", "eu"), ("jp", "jp")];
@@ -48,7 +49,7 @@ const STORE_OPS: [&str; 12] = ["str", "strb", "strh", "strd", "stm", "stmia", "s
 const OTHER_OPS: [&str; 8] = ["msr", "mrs", "mcr", "mrc", "svc", "swi", "udf", "nop"];
 
 const USAGE: &str = "usage: cargo xtask corpus [run|stub|lint|fix|move|keep-symbols-list [symbols...]|strip|sync|status|lock|generate|verify] [--corpus <asm-corpus dir>] \
-                     [--decomp <pmd-sky clone with all three regions built>] [--no-sync] [--encodings] \
+                     [--decomp <pmd-sky clone with all three regions built>] [--no-sync] [--encodings] [--resolve-completed-symbols [verbose]] \
                      [--stub-mode in-place|position|position-with-warn] [--no-auto-keep] [keep-symbols-list --remove] [lint|fix [files...] [--fix-structure] [--fix-ordering] [--fix-all]] \
                      [--style <auto|list|columns>[,compact][,align][,label_last|label_first]] [--labels hide|before|after] [move --stage|--stage-strict] [status --group-by groups[+paths]]";
 
@@ -215,6 +216,14 @@ impl SymSpec {
             SymSpec::Inline(spec) => spec.callers().map(|c| spec.caller_query(c)).collect(),
         }
     }
+
+    fn rsdec_name(&self) -> &str {
+        let path = match self {
+            SymSpec::Plain(s) => s,
+            SymSpec::Inline(spec) => &spec.target,
+        };
+        path.rsplit('/').next().unwrap_or(path)
+    }
 }
 
 struct RawCommand {
@@ -273,6 +282,7 @@ struct Options {
     label_first: bool,
     labels: Labels,
     group_by_paths: bool,
+    resolve_symbols: Option<rename::Legend>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -298,8 +308,8 @@ pub fn main(args: &[String]) -> Result<()> {
     let mut remove = false;
     let mut stage = crate::corpus_move::Stage::No;
     let (mut fix_structure, mut fix_ordering) = (false, false);
-    let mut opts = Options { stub_mode: StubMode::InPlace, auto_keep: true, encodings: false, style: Style::Auto, compact: false, align: false, label_first: false, labels: Labels::Hide, group_by_paths: false };
-    let mut it = args.iter();
+    let mut opts = Options { stub_mode: StubMode::InPlace, auto_keep: true, encodings: false, style: Style::Auto, compact: false, align: false, label_first: false, labels: Labels::Hide, group_by_paths: false, resolve_symbols: None };
+    let mut it = args.iter().peekable();
     while let Some(a) = it.next() {
         match a.as_str() {
             "help" | "--help" | "-h" => {
@@ -325,6 +335,10 @@ pub fn main(args: &[String]) -> Result<()> {
                 }
             }
             "--encodings" => opts.encodings = true,
+            "--resolve-completed-symbols" => {
+                let verbose = it.next_if(|a| a.as_str() == "verbose").is_some();
+                opts.resolve_symbols = Some(if verbose { rename::Legend::Verbose } else { rename::Legend::Short });
+            }
             "--group-by" => {
                 let spec = it.next().context("--group-by needs a value")?;
                 let tokens: Vec<&str> = spec.split([',', '+']).map(str::trim).collect();
@@ -1799,22 +1813,37 @@ fn align_units(left: &[Key], right: &[Key]) -> Option<Vec<(Option<usize>, Option
     Some(out)
 }
 
+fn legend_pad(left: &[String], right: &[String], units: &[Vec<Vec<String>>; 2]) -> Option<(usize, usize)> {
+    let first = left.iter().position(|l| rename::is_legend(l))?;
+    if right.is_empty() || left[..first].iter().any(|l| LABEL.is_match(l) || INSN.is_match(l)) {
+        return None;
+    }
+    let end = first + left[first..].iter().take_while(|l| rename::is_legend(l)).count();
+    let at = right.iter().take_while(|l| l.starts_with("== ")).count();
+    let rows = |side: &[Vec<String>]| side.iter().map(Vec::len).sum::<usize>();
+    let (lrows, rrows) = (rows(&units[0][..end]), rows(&units[1][..at]));
+    (lrows > rrows).then(|| (at, lrows - rrows))
+}
+
 fn render_block(indent: &str, stage: &str, left: &[String], right: &[String], opts: Options) -> Vec<String> {
     let ltitle = format!("asm-corpus {stage}");
     let rtitle = format!("rsdec {stage}");
     let list = match opts.style {
         Style::List => true,
         Style::Columns => false,
-        Style::Auto => left.len() <= LIST_STYLE_MAX_LINES && right.len() <= LIST_STYLE_MAX_LINES,
+        Style::Auto => {
+            let shown = |s: &[String]| s.iter().filter(|l| !rename::is_legend(l)).count();
+            shown(left) <= LIST_STYLE_MAX_LINES && shown(right) <= LIST_STYLE_MAX_LINES
+        }
     };
-    let keys = [left, right].map(|s| s.iter().map(|l| key_of(l)).collect::<Vec<_>>());
-    let units = if opts.compact {
+    let mut keys = [left, right].map(|s| s.iter().map(|l| key_of(l)).collect::<Vec<_>>());
+    let mut units = if opts.compact {
         compact_units([left, right], opts.encodings, opts.label_first)
     } else {
         let width = [left, right]
             .iter()
             .flat_map(|s| s.iter())
-            .filter(|l| !l.starts_with(MARK_TAG))
+            .filter(|l| !l.starts_with(MARK_TAG) && !rename::is_legend(l))
             .map(|l| normalize(l, opts.encodings).len())
             .max()
             .unwrap_or(0)
@@ -1825,6 +1854,24 @@ fn render_block(indent: &str, stage: &str, left: &[String], right: &[String], op
                 .collect()
         })
     };
+    let legend_width = left
+        .iter()
+        .zip(&units[0])
+        .filter(|(l, _)| !rename::is_legend(l))
+        .flat_map(|(_, u)| u)
+        .map(|r| r.chars().count())
+        .chain([ltitle.len()])
+        .max()
+        .unwrap_or(0);
+    for (l, u) in left.iter().zip(&mut units[0]) {
+        if let Some(rows) = rename::wrap_legend(l, legend_width) {
+            *u = rows.iter().map(|r| defuse(r)).collect();
+        }
+    }
+    if !list && let Some((at, pad)) = legend_pad(left, right, &units) {
+        units[1].splice(at..at, std::iter::repeat_n(vec![String::new()], pad));
+        keys[1].splice(at..at, std::iter::repeat_with(|| Key::Unmatched).take(pad));
+    }
     let alignment = if opts.align && !list { align_units(&keys[0], &keys[1]) } else { None };
     let [left, right] = match alignment {
         Some(steps) => {
@@ -2054,6 +2101,7 @@ fn pipeline(rsdec: &Path, corpus_root: &Path, mode: Mode, opts: Options, retry: 
         if !errors.is_empty() {
             bail!("{}", errors.join("\n"));
         }
+        let renames = opts.resolve_symbols.map(|legend| renames_of(&lock, &records, &cmds, legend));
         let mut blocks: Vec<BTreeMap<usize, Vec<String>>> = vec![BTreeMap::new(); sources.len()];
         let mut dwarf: HashMap<(Cpu, Option<&'static str>), inline::Info> = HashMap::new();
         for (ci, c) in cmds.iter().enumerate() {
@@ -2073,16 +2121,25 @@ fn pipeline(rsdec: &Path, corpus_root: &Path, mode: Mode, opts: Options, retry: 
                 left.push(format!("   {}", rec.source));
                 left.extend(rec.notes.iter().map(|n| format!("!! {n}")));
                 let listing = |r: &str| rec.regions.get(r).and_then(|x| x.listing.as_ref());
-                match rec.regions.get(stage) {
-                    Some(RegionEntry { listing: Some(l), .. }) => {
-                        left.extend(mods.lines.apply(annotate_corpus_listing(l), opts.labels))
-                    }
+                let shown = match rec.regions.get(stage) {
+                    Some(RegionEntry { listing: Some(l), .. }) => Some((stage, annotate_corpus_listing(l))),
                     Some(RegionEntry { same_as: Some(b), .. }) => {
                         left.push(format!("-- {stage} bytes identical to {b}"));
-                        let l = listing(b).map(|l| annotate_corpus_listing(l)).unwrap_or_default();
-                        left.extend(mods.lines.apply(l, opts.labels));
+                        Some((b.as_str(), listing(b).map(|l| annotate_corpus_listing(l)).unwrap_or_default()))
                     }
-                    _ => left.push(format!("-- absent in {stage}")),
+                    _ => {
+                        left.push(format!("-- absent in {stage}"));
+                        None
+                    }
+                };
+                if let Some((region, l)) = shown {
+                    let l = mods.lines.apply(l, opts.labels);
+                    let (legend, l) = match &renames {
+                        Some(r) => r.apply(l, e.dir(), region),
+                        None => (Vec::new(), l),
+                    };
+                    left.extend(legend);
+                    left.extend(l);
                 }
             }
             let mut right = Vec::new();
@@ -2176,6 +2233,9 @@ fn pipeline(rsdec: &Path, corpus_root: &Path, mode: Mode, opts: Options, retry: 
     for w in stub_warnings.iter().chain(&inline_warnings) {
         warn(w);
     }
+    if mode == Mode::Run && opts.resolve_symbols.is_some() {
+        println!("--resolve-completed-symbols: original symbol names were roughly replaced with their rsdec counterparts");
+    }
     if mode == Mode::Run {
         for (s, text) in sources.iter().zip(&new_texts) {
             if COMMAND.is_match(text) {
@@ -2184,6 +2244,19 @@ fn pipeline(rsdec: &Path, corpus_root: &Path, mode: Mode, opts: Options, retry: 
         }
     }
     Ok(())
+}
+
+fn renames_of(lock: &[LockEntry], records: &HashMap<usize, Record>, cmds: &[Cmd], legend: rename::Legend) -> rename::Renames {
+    let mut renames = rename::Renames::new(lock.iter().map(|e| (e.dir(), e.name.as_str())), legend);
+    for c in cmds {
+        let names: Vec<String> = c.syms.iter().map(|(s, _)| s.rsdec_name().to_string()).collect();
+        let done = matches!(c.state, State::Complete(_));
+        for &(u, _) in c.units.iter().filter(|(_, m)| !m.ignore) {
+            let unit = rename::Unit { module: lock[u].dir().to_string(), name: lock[u].name.clone(), addrs: region_addrs(&records[&u]) };
+            renames.add(u, unit, &names, done);
+        }
+    }
+    renames
 }
 
 struct KeepEdits {
