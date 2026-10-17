@@ -466,10 +466,10 @@ pub extern "C" fn OS_Init() {
 #[unsafe(link_section = ".text.origaddr.0207A3B4")]
 #[unsafe(no_mangle)]
 pub extern "C" fn OS_InitArena() {
-    if OSi_Initialized.get() != 0 {
+    if OSi_InitializedArenas.get() != 0 {
         return;
     }
-    OSi_Initialized.set(1);
+    OSi_InitializedArenas.set(1);
 
     OS_SetArenaHi(OS_ARENA_MAIN, OS_GetInitArenaHi(OS_ARENA_MAIN));
     OS_SetArenaLo(OS_ARENA_MAIN, OS_GetInitArenaLo(OS_ARENA_MAIN));
@@ -731,7 +731,7 @@ pub static OSi_DynamicIrqCallbackInfo: Global<OSDynamicIrqCallbackInfoTable> = G
 });
 
 #[unsafe(link_section = ".bss.origaddr.022B98C4")]
-pub static OSi_Initialized: Global<u32> = Global::new(0);
+pub static OSi_InitializedArenas: Global<u32> = Global::new(0);
 
 #[unsafe(link_section = ".bss.origaddr.022B98C8")]
 pub static OSi_MAINEX_ENABLE: Global<u32> = Global::new(0); /* enable extended Main RAM 8 MiB (debug console only) */
@@ -765,10 +765,10 @@ pub extern "C" fn OS_Init() {
 #[unsafe(link_section = ".text.wram.origaddr.037FCA1C")]
 #[unsafe(no_mangle)]
 pub extern "C" fn OS_InitArena() {
-    if OSi_Initialized.get() != 0 {
+    if OSi_InitializedArenas.get() != 0 {
         return;
     }
-    OSi_Initialized.set(1);
+    OSi_InitializedArenas.set(1);
 
     OS_SetArenaHi(OS_ARENA_MAIN_SUBPRIV, OS_GetInitArenaHi(OS_ARENA_MAIN_SUBPRIV));
     set_arena_lo(OS_ARENA_MAIN_SUBPRIV, OS_GetInitArenaLo(OS_ARENA_MAIN_SUBPRIV));
@@ -916,7 +916,7 @@ pub static OSi_DynamicIrqCallbackInfo: Global<OSDynamicIrqCallbackInfoTable> = G
 });
 
 #[unsafe(link_section = ".bss.wram.origaddr.038077FC")]
-pub static OSi_Initialized: Global<u32> = Global::new(0);
+pub static OSi_InitializedArenas: Global<u32> = Global::new(0);
 
 /*cfg_select*/ } _
 => {} }
